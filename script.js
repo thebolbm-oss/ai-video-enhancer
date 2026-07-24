@@ -617,7 +617,8 @@ async function ensureModelLoaded() {
   App.els.modelStatus.textContent = 'Loading...';
   
   // Directly injecting the release download URL as requested
-  const MODEL_OVERRIDE_PATH = 'https://github.com/thebolbm-oss/ai-video-enhancer/releases/download/v1.0-model/realesrgan-x4.onnx';
+  const MODEL_OVERRIDE_PATH = 'https://cdn.jsdelivr.net/gh/thebolbm-oss/ai-video-enhancer@main/models/realesrgan-x4.onnx';
+   
   if (typeof ONNXEngine.setModelPath === 'function') {
     ONNXEngine.setModelPath(MODEL_OVERRIDE_PATH);
   } else {
