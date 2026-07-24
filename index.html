@@ -1,49 +1,370 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Real-ESRGAN AI Enhancer</title>
-    <link rel="stylesheet" href="style.css">
-    
-    <!-- ONNX Runtime Web -->
-    <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort.min.js"></script>
-    <!-- FFmpeg.wasm for Video Processing -->
-    <script src="https://unpkg.com/@ffmpeg/ffmpeg@0.12.0/dist/umd/ffmpeg.js"></script>
+
+<meta charset="UTF-8">
+
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+<title>AI Video Enhancer</title>
+
+<link rel="icon" href="assets/favicon.png">
+
+<link rel="stylesheet" href="style.css">
+
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+
+<link rel="stylesheet"
+href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
+
 </head>
+
 <body>
-    <div class="app-container">
-        <header>
-            <h1>Real-ESRGAN AI</h1>
-            <p>True Client-Side Neural Upscaling</p>
-        </header>
 
-        <div class="card">
-            <div class="mode-selector">
-                <button id="imgModeBtn" class="mode-btn active" onclick="switchMode('image')">Image</button>
-                <button id="vidModeBtn" class="mode-btn" onclick="switchMode('video')">Video</button>
-            </div>
+<header>
 
-            <div class="file-drop-zone">
-                <input type="file" id="mediaUpload" accept="image/*, video/*">
-                <span id="uploadLabel">📁 Select Image or Video</span>
-            </div>
+<nav class="navbar">
 
-            <button id="enhanceBtn" class="primary-btn">Run Real-ESRGAN AI</button>
-        </div>
+<div class="logo">
 
-        <div class="card" id="progressSection" style="display: none;">
-            <progress id="progressBar" value="0" max="100"></progress>
-            <p id="statusText">Loading Real-ESRGAN Model...</p>
-        </div>
+<img src="assets/logo.png" alt="logo">
 
-        <div class="card" id="resultSection" style="display: none;">
-            <h3>Result</h3>
-            <div id="outputContainer"></div>
-            <a id="downloadBtn" class="secondary-btn" download="enhanced.png">Download Output</a>
-        </div>
-    </div>
+<h2>AI Video Enhancer</h2>
 
-    <script src="script.js"></script>
+</div>
+
+<ul class="nav-links">
+
+<li><a href="#">Home</a></li>
+
+<li><a href="#">Image</a></li>
+
+<li><a href="#">Video</a></li>
+
+<li><a href="#">About</a></li>
+
+</ul>
+
+<button class="github">
+
+<i class="fab fa-github"></i>
+
+GitHub
+
+</button>
+
+</nav>
+
+</header>
+
+<section class="hero">
+
+<h1>
+
+AI Image & Video Enhancer
+
+</h1>
+
+<p>
+
+Enhance Images and Videos using Real-ESRGAN AI directly inside your browser.
+
+</p>
+
+<div class="hero-buttons">
+
+<button class="primary-btn">
+
+<i class="fa-solid fa-upload"></i>
+
+Upload File
+
+</button>
+
+<button class="secondary-btn">
+
+<i class="fa-solid fa-circle-info"></i>
+
+Learn More
+
+</button>
+
+</div>
+
+</section>
+
+<section class="upload-section">
+
+<div class="upload-box" id="dropArea">
+
+<i class="fa-solid fa-cloud-arrow-up"></i>
+
+<h2>Drag & Drop</h2>
+
+<p>
+
+Upload Image or Video
+
+</p>
+
+<input
+type="file"
+id="fileInput"
+accept="image/*,video/*"
+hidden>
+
+<button id="browseBtn">
+
+Browse Files
+
+</button>
+
+</div>
+
+</section>
+<section class="controls">
+
+<div class="control-card">
+
+<h2>AI Settings</h2>
+
+<div class="setting">
+
+<label>Enhancement Mode</label>
+
+<select id="mode">
+
+<option value="image">Image</option>
+
+<option value="video">Video</option>
+
+</select>
+
+</div>
+
+<div class="setting">
+
+<label>Upscale Level</label>
+
+<select id="scale">
+
+<option value="2">2×</option>
+
+<option value="4" selected>4×</option>
+
+<option value="8">8×</option>
+
+</select>
+
+</div>
+
+<div class="setting">
+
+<label>AI Model</label>
+
+<select id="model">
+
+<option>Real-ESRGAN x4</option>
+
+</select>
+
+</div>
+
+<div class="setting">
+
+<label>Output Format</label>
+
+<select id="format">
+
+<option>PNG</option>
+
+<option>JPG</option>
+
+<option>WEBP</option>
+
+<option>MP4</option>
+
+</select>
+
+</div>
+
+<button id="enhanceBtn" class="enhance-btn">
+
+<i class="fa-solid fa-wand-magic-sparkles"></i>
+
+Enhance Now
+
+</button>
+
+</div>
+
+</section>
+
+<section class="progress-section">
+
+<div class="progress-card">
+
+<h2>Processing Status</h2>
+
+<div class="progress-bar">
+
+<div id="progressFill"></div>
+
+</div>
+
+<p id="progressText">
+
+Waiting for upload...
+
+</p>
+
+</div>
+
+</section>
+
+<section class="preview-section">
+
+<div class="preview-card">
+
+<h2>Original</h2>
+
+<img id="originalPreview" src="" alt="Original">
+
+</div>
+
+<div class="preview-card">
+<section class="compare-section">
+
+<div class="compare-card">
+
+<h2>Before / After Comparison</h2>
+
+<div class="compare-container">
+
+<div class="compare-image">
+
+<img id="beforeImage" src="" alt="Before">
+
+</div>
+
+<div class="compare-image">
+
+<img id="afterImage" src="" alt="After">
+
+</div>
+
+</div>
+
+</div>
+
+</section>
+
+<section class="system-info">
+
+<div class="info-card">
+
+<i class="fa-solid fa-microchip"></i>
+
+<h3>AI Model</h3>
+
+<p>Real-ESRGAN x4 ONNX</p>
+
+</div>
+
+<div class="info-card">
+
+<i class="fa-solid fa-gauge-high"></i>
+
+<h3>GPU Status</h3>
+
+<p id="gpuStatus">Checking...</p>
+
+</div>
+
+<div class="info-card">
+
+<i class="fa-solid fa-memory"></i>
+
+<h3>Memory</h3>
+
+<p id="memoryStatus">Ready</p>
+
+</div>
+
+<div class="info-card">
+
+<i class="fa-solid fa-film"></i>
+
+<h3>Video Engine</h3>
+
+<p>FFmpeg.wasm</p>
+
+</div>
+
+</section>
+
+<footer>
+
+<div class="footer-content">
+
+<h2>AI Video Enhancer</h2>
+
+<p>
+
+Powered by Real-ESRGAN • ONNX Runtime Web • FFmpeg.wasm
+
+</p>
+
+<div class="footer-links">
+
+<a href="#">Privacy</a>
+
+<a href="#">Terms</a>
+
+<a href="#">GitHub</a>
+
+</div>
+
+</div>
+
+</footer>
+
+<script src="https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort.min.js"></script>
+
+<script src="https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg/dist/ffmpeg.min.js"></script>
+
+<script src="js/utils.js"></script>
+
+<script src="js/ui.js"></script>
+
+<script src="js/image.js"></script>
+
+<script src="js/video.js"></script>
+
+<script src="js/onnx.js"></script>
+
+<script src="script.js"></script>
+
 </body>
+
 </html>
+<h2>Enhanced</h2>
+
+<img id="enhancedPreview" src="" alt="Enhanced">
+
+</div>
+
+</section>
+
+<section class="download-section">
+
+<button id="downloadBtn">
+
+<i class="fa-solid fa-download"></i>
+
+Download Result
+
+</button>
+
+</section>
