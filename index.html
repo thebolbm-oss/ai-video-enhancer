@@ -3,25 +3,45 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AI Video Enhancer</title>
+    <title>Real-ESRGAN AI Enhancer</title>
     <link rel="stylesheet" href="style.css">
     
-    <!-- ONNX Runtime Web (AI Engine) -->
+    <!-- ONNX Runtime Web -->
     <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort.min.js"></script>
-    
-    <!-- FFmpeg.wasm (Video Manager) -->
+    <!-- FFmpeg.wasm for Video Processing -->
     <script src="https://unpkg.com/@ffmpeg/ffmpeg@0.12.0/dist/umd/ffmpeg.js"></script>
 </head>
 <body>
-    <div class="container">
-        <h1>AI Video Enhancer</h1>
-        <p>Client-side video upscaling</p>
-        
-        <input type="file" id="mediaUpload" accept="video/mp4, video/x-m4v, video/*">
-        <button id="enhanceBtn">Enhance Video</button>
-        
-        <div id="status">Ready to process...</div>
-        <div id="outputContainer"></div>
+    <div class="app-container">
+        <header>
+            <h1>Real-ESRGAN AI</h1>
+            <p>True Client-Side Neural Upscaling</p>
+        </header>
+
+        <div class="card">
+            <div class="mode-selector">
+                <button id="imgModeBtn" class="mode-btn active" onclick="switchMode('image')">Image</button>
+                <button id="vidModeBtn" class="mode-btn" onclick="switchMode('video')">Video</button>
+            </div>
+
+            <div class="file-drop-zone">
+                <input type="file" id="mediaUpload" accept="image/*, video/*">
+                <span id="uploadLabel">📁 Select Image or Video</span>
+            </div>
+
+            <button id="enhanceBtn" class="primary-btn">Run Real-ESRGAN AI</button>
+        </div>
+
+        <div class="card" id="progressSection" style="display: none;">
+            <progress id="progressBar" value="0" max="100"></progress>
+            <p id="statusText">Loading Real-ESRGAN Model...</p>
+        </div>
+
+        <div class="card" id="resultSection" style="display: none;">
+            <h3>Result</h3>
+            <div id="outputContainer"></div>
+            <a id="downloadBtn" class="secondary-btn" download="enhanced.png">Download Output</a>
+        </div>
     </div>
 
     <script src="script.js"></script>
