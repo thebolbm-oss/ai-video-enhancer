@@ -368,3 +368,118 @@ Download Result
 </button>
 
 </section>
+<section class="compare-section">
+
+<div class="compare-card">
+
+<h2>Before / After Comparison</h2>
+
+<div class="compare-container">
+
+<div class="compare-image">
+
+<img id="beforeImage" src="" alt="Before">
+
+</div>
+
+<div class="compare-image">
+
+<img id="afterImage" src="" alt="After">
+
+</div>
+
+</div>
+
+</div>
+
+</section>
+
+<section class="system-info">
+
+<div class="info-card">
+
+<i class="fa-solid fa-microchip"></i>
+
+<h3>AI Model</h3>
+
+<p>Real-ESRGAN x4 ONNX</p>
+
+</div>
+
+<div class="info-card">
+
+<i class="fa-solid fa-gauge-high"></i>
+
+<h3>GPU Status</h3>
+
+<p id="gpuStatus">Checking...</p>
+
+</div>
+
+<div class="info-card">
+
+<i class="fa-solid fa-memory"></i>
+
+<h3>Memory</h3>
+
+<p id="memoryStatus">Ready</p>
+
+</div>
+
+<div class="info-card">
+
+<i class="fa-solid fa-film"></i>
+
+<h3>Video Engine</h3>
+
+<p>FFmpeg.wasm</p>
+
+</div>
+
+</section>
+
+<footer>
+
+<div class="footer-content">
+
+<h2>AI Video Enhancer</h2>
+
+<p>
+
+Powered by Real-ESRGAN • ONNX Runtime Web • FFmpeg.wasm
+
+</p>
+
+<div class="footer-links">
+
+<a href="#">Privacy</a>
+
+<a href="#">Terms</a>
+
+<a href="#">GitHub</a>
+
+</div>
+
+</div>
+
+</footer>
+
+<script src="https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort.min.js"></script>
+
+<script src="https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg/dist/ffmpeg.min.js"></script>
+
+<script src="js/utils.js"></script>
+
+<script src="js/ui.js"></script>
+
+<script src="js/image.js"></script>
+
+<script src="js/video.js"></script>
+
+<script src="js/onnx.js"></script>
+
+<script src="script.js"></script>
+
+</body>
+
+</html>
