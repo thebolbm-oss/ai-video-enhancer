@@ -1,485 +1,518 @@
 <!DOCTYPE html>
 <html lang="en">
-
 <head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>AI Video Enhancer | Real-ESRGAN Powered Upscaler</title>
+<meta name="description" content="Professional AI Image & Video Upscaler powered by Real-ESRGAN, ONNX Runtime Web and FFmpeg.wasm" />
 
-<meta charset="UTF-8">
+<!-- Favicon -->
+<link rel="icon" type="image/png" href="assets/favicon.png" />
 
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<!-- Font Awesome -->
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" />
 
-<title>AI Video Enhancer</title>
+<!-- Google Font -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700;800&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
 
-<link rel="icon" href="assets/favicon.png">
-
-<link rel="stylesheet" href="style.css">
-
-<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-
-<link rel="stylesheet"
-href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
-
+<!-- Main Stylesheet -->
+<link rel="stylesheet" href="style.css" />
 </head>
-
 <body>
 
-<header>
-
-<nav class="navbar">
-
-<div class="logo">
-
-<img src="assets/logo.png" alt="logo">
-
-<h2>AI Video Enhancer</h2>
-
+<!-- ===================== ANIMATED BACKGROUND ===================== -->
+<div class="animated-bg">
+  <div class="bg-blob blob-1"></div>
+  <div class="bg-blob blob-2"></div>
+  <div class="bg-blob blob-3"></div>
+  <div class="bg-grid"></div>
 </div>
 
-<ul class="nav-links">
+<!-- ===================== NOTIFICATION CONTAINER ===================== -->
+<div id="notificationContainer" class="notification-container"></div>
 
-<li><a href="#">Home</a></li>
+<!-- ===================== LOADING OVERLAY ===================== -->
+<div id="loadingOverlay" class="loading-overlay hidden">
+  <div class="loading-box glass">
+    <div class="ai-spinner">
+      <div class="ai-spinner-ring"></div>
+      <div class="ai-spinner-ring"></div>
+      <div class="ai-spinner-ring"></div>
+      <i class="fa-solid fa-brain"></i>
+    </div>
+    <p id="loadingText">Initializing AI Engine...</p>
+  </div>
+</div>
 
-<li><a href="#">Image</a></li>
+<!-- ===================== NAVBAR ===================== -->
+<nav class="navbar glass" id="navbar">
+  <div class="nav-container">
+    <div class="nav-logo">
+      <div class="logo-icon">
+        <i class="fa-solid fa-wand-magic-sparkles"></i>
+      </div>
+      <span class="logo-text">AI Video <span class="accent">Enhancer</span></span>
+    </div>
 
-<li><a href="#">Video</a></li>
+    <ul class="nav-links" id="navLinks">
+      <li><a href="#home" class="nav-link active"><i class="fa-solid fa-house"></i> Home</a></li>
+      <li><a href="#upload" class="nav-link"><i class="fa-solid fa-upload"></i> Upload</a></li>
+      <li><a href="#dashboard" class="nav-link"><i class="fa-solid fa-gauge-high"></i> Dashboard</a></li>
+      <li><a href="#compare" class="nav-link"><i class="fa-solid fa-code-compare"></i> Compare</a></li>
+      <li><a href="#footer" class="nav-link"><i class="fa-solid fa-circle-info"></i> About</a></li>
+    </ul>
 
-<li><a href="#">About</a></li>
-
-</ul>
-
-<button class="github">
-
-<i class="fab fa-github"></i>
-
-GitHub
-
-</button>
-
+    <div class="nav-actions">
+      <button class="icon-btn" id="themeToggleBtn" title="Toggle Theme">
+        <i class="fa-solid fa-moon"></i>
+      </button>
+      <a href="https://github.com" target="_blank" rel="noopener" class="icon-btn" title="GitHub">
+        <i class="fa-brands fa-github"></i>
+      </a>
+      <button class="icon-btn mobile-only" id="menuToggleBtn" title="Menu">
+        <i class="fa-solid fa-bars"></i>
+      </button>
+    </div>
+  </div>
 </nav>
 
-</header>
-
-<section class="hero">
-
-<h1>
-
-AI Image & Video Enhancer
-
-</h1>
-
-<p>
-
-Enhance Images and Videos using Real-ESRGAN AI directly inside your browser.
-
-</p>
-
-<div class="hero-buttons">
-
-<button class="primary-btn">
-
-<i class="fa-solid fa-upload"></i>
-
-Upload File
-
-</button>
-
-<button class="secondary-btn">
-
-<i class="fa-solid fa-circle-info"></i>
-
-Learn More
-
-</button>
-
+<!-- ===================== MOBILE NAV DRAWER ===================== -->
+<div class="mobile-drawer" id="mobileDrawer">
+  <div class="drawer-header">
+    <span class="logo-text">AI Video <span class="accent">Enhancer</span></span>
+    <button id="closeDrawerBtn" class="icon-btn"><i class="fa-solid fa-xmark"></i></button>
+  </div>
+  <ul class="drawer-links">
+    <li><a href="#home" class="drawer-link"><i class="fa-solid fa-house"></i> Home</a></li>
+    <li><a href="#upload" class="drawer-link"><i class="fa-solid fa-upload"></i> Upload</a></li>
+    <li><a href="#dashboard" class="drawer-link"><i class="fa-solid fa-gauge-high"></i> Dashboard</a></li>
+    <li><a href="#compare" class="drawer-link"><i class="fa-solid fa-code-compare"></i> Compare</a></li>
+    <li><a href="#footer" class="drawer-link"><i class="fa-solid fa-circle-info"></i> About</a></li>
+  </ul>
 </div>
-
-</section>
-
-<section class="upload-section">
-
-<div class="upload-box" id="dropArea">
-
-<i class="fa-solid fa-cloud-arrow-up"></i>
-
-<h2>Drag & Drop</h2>
-
-<p>
-
-Upload Image or Video
-
-</p>
-
-<input
-type="file"
-id="fileInput"
-accept="image/*,video/*"
-hidden>
-
-<button id="browseBtn">
-
-Browse Files
-
-</button>
-
-</div>
-
-</section>
-<section class="controls">
-
-<div class="control-card">
-
-<h2>AI Settings</h2>
-
-<div class="setting">
-
-<label>Enhancement Mode</label>
-
-<select id="mode">
-
-<option value="image">Image</option>
-
-<option value="video">Video</option>
-
-</select>
-
-</div>
-
-<div class="setting">
-
-<label>Upscale Level</label>
-
-<select id="scale">
-
-<option value="2">2×</option>
-
-<option value="4" selected>4×</option>
-
-<option value="8">8×</option>
-
-</select>
-
-</div>
-
-<div class="setting">
-
-<label>AI Model</label>
-
-<select id="model">
-
-<option>Real-ESRGAN x4</option>
-
-</select>
-
-</div>
-
-<div class="setting">
-
-<label>Output Format</label>
-
-<select id="format">
-
-<option>PNG</option>
-
-<option>JPG</option>
-
-<option>WEBP</option>
-
-<option>MP4</option>
-
-</select>
-
-</div>
-
-<button id="enhanceBtn" class="enhance-btn">
-
-<i class="fa-solid fa-wand-magic-sparkles"></i>
-
-Enhance Now
-
-</button>
-
-</div>
-
-</section>
-
-<section class="progress-section">
-
-<div class="progress-card">
-
-<h2>Processing Status</h2>
-
-<div class="progress-bar">
-
-<div id="progressFill"></div>
-
-</div>
-
-<p id="progressText">
-
-Waiting for upload...
-
-</p>
-
-</div>
-
-</section>
-
-<section class="preview-section">
-
-<div class="preview-card">
-
-<h2>Original</h2>
-
-<img id="originalPreview" src="" alt="Original">
-
-</div>
-<section class="compare-section">
-
-<div class="compare-card">
-
-<h2>Before / After Comparison</h2>
-
-<div class="compare-container">
-
-<div class="compare-image">
-
-<img id="beforeImage" src="" alt="Before">
-
-</div>
-
-<div class="compare-image">
-
-<img id="afterImage" src="" alt="After">
-
-</div>
-
-</div>
-
-</div>
-
-</section>
-
-<section class="system-info">
-
-<div class="info-card">
-
-<i class="fa-solid fa-microchip"></i>
-
-<h3>AI Model</h3>
-
-<p>Real-ESRGAN x4 ONNX</p>
-
-</div>
-
-<div class="info-card">
-
-<i class="fa-solid fa-gauge-high"></i>
-
-<h3>GPU Status</h3>
-
-<p id="gpuStatus">Checking...</p>
-
-</div>
-
-<div class="info-card">
-
-<i class="fa-solid fa-memory"></i>
-
-<h3>Memory</h3>
-
-<p id="memoryStatus">Ready</p>
-
-</div>
-
-<div class="info-card">
-
-<i class="fa-solid fa-film"></i>
-
-<h3>Video Engine</h3>
-
-<p>FFmpeg.wasm</p>
-
-</div>
-
-</section>
-
-<footer>
-
-<div class="footer-content">
-
-<h2>AI Video Enhancer</h2>
-
-<p>
-
-Powered by Real-ESRGAN • ONNX Runtime Web • FFmpeg.wasm
-
-</p>
-
-<div class="footer-links">
-
-<a href="#">Privacy</a>
-
-<a href="#">Terms</a>
-
-<a href="#">GitHub</a>
-
-</div>
-
-</div>
-
+<div class="drawer-backdrop" id="drawerBackdrop"></div>
+
+<!-- ===================== MAIN CONTENT ===================== -->
+<main>
+
+  <!-- ===================== HERO SECTION ===================== -->
+  <section class="hero" id="home">
+    <div class="hero-container">
+      <div class="hero-badge glass">
+        <span class="pulse-dot"></span>
+        Real-ESRGAN x4 &bull; ONNX Runtime Web &bull; WebGPU Accelerated
+      </div>
+      <h1 class="hero-title">
+        Transform Your <span class="gradient-text">Images &amp; Videos</span><br />
+        With The Power Of AI
+      </h1>
+      <p class="hero-subtitle">
+        Upscale, enhance and restore your media in seconds using state-of-the-art
+        Real-ESRGAN super resolution — running entirely in your browser. No uploads
+        to any server. 100% private.
+      </p>
+      <div class="hero-cta">
+        <a href="#upload" class="btn btn-primary">
+          <i class="fa-solid fa-bolt"></i> Start Enhancing
+        </a>
+        <a href="#dashboard" class="btn btn-glass">
+          <i class="fa-solid fa-chart-line"></i> View Dashboard
+        </a>
+      </div>
+
+      <div class="hero-stats">
+        <div class="stat-card glass">
+          <i class="fa-solid fa-image"></i>
+          <div>
+            <h3>4x</h3>
+            <p>Upscale Factor</p>
+          </div>
+        </div>
+        <div class="stat-card glass">
+          <i class="fa-solid fa-microchip"></i>
+          <div>
+            <h3>WebGPU</h3>
+            <p>Hardware Accelerated</p>
+          </div>
+        </div>
+        <div class="stat-card glass">
+          <i class="fa-solid fa-shield-halved"></i>
+          <div>
+            <h3>100%</h3>
+            <p>Client-Side Privacy</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== AI DASHBOARD ===================== -->
+  <section class="dashboard" id="dashboard">
+    <div class="section-container">
+      <h2 class="section-title"><i class="fa-solid fa-gauge-high"></i> AI Engine Dashboard</h2>
+      <p class="section-subtitle">Live system status of your AI inference engine</p>
+
+      <div class="dashboard-grid">
+        <div class="dash-card glass">
+          <div class="dash-icon success"><i class="fa-solid fa-microchip"></i></div>
+          <div class="dash-info">
+            <span class="dash-label">GPU Status</span>
+            <span class="dash-value" id="gpuStatus">Detecting...</span>
+          </div>
+        </div>
+
+        <div class="dash-card glass">
+          <div class="dash-icon info"><i class="fa-solid fa-brain"></i></div>
+          <div class="dash-info">
+            <span class="dash-label">AI Backend</span>
+            <span class="dash-value" id="backendStatus">Not Loaded</span>
+          </div>
+        </div>
+
+        <div class="dash-card glass">
+          <div class="dash-icon warning"><i class="fa-solid fa-memory"></i></div>
+          <div class="dash-info">
+            <span class="dash-label">Memory Usage</span>
+            <span class="dash-value" id="memoryStatus">0 MB</span>
+          </div>
+        </div>
+
+        <div class="dash-card glass">
+          <div class="dash-icon accent"><i class="fa-solid fa-circle-check"></i></div>
+          <div class="dash-info">
+            <span class="dash-label">Model Status</span>
+            <span class="dash-value" id="modelStatus">Idle</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== UPLOAD SECTION ===================== -->
+  <section class="upload-section" id="upload">
+    <div class="section-container">
+      <h2 class="section-title"><i class="fa-solid fa-upload"></i> Upload Your Media</h2>
+      <p class="section-subtitle">Drag &amp; drop or browse to select an image or video file</p>
+
+      <!-- Mode Switch -->
+      <div class="mode-switch glass">
+        <button class="mode-btn active" id="imageModeBtn" data-mode="image">
+          <i class="fa-solid fa-image"></i> Image
+        </button>
+        <button class="mode-btn" id="videoModeBtn" data-mode="video">
+          <i class="fa-solid fa-video"></i> Video
+        </button>
+      </div>
+
+      <!-- Upload Card -->
+      <div class="upload-card glass" id="uploadCard">
+        <input type="file" id="fileInput" accept="image/*" hidden />
+        <div class="upload-dropzone" id="dropZone">
+          <div class="upload-icon-wrap">
+            <i class="fa-solid fa-cloud-arrow-up upload-icon"></i>
+          </div>
+          <h3>Drag &amp; Drop your file here</h3>
+          <p>or click the button below to browse</p>
+          <button class="btn btn-primary" id="browseBtn">
+            <i class="fa-solid fa-folder-open"></i> Browse File
+          </button>
+          <span class="upload-hint" id="uploadHint">Supported: JPG, PNG, WEBP (Max 25MB)</span>
+        </div>
+      </div>
+
+      <!-- AI Settings -->
+      <div class="settings-card glass" id="settingsCard">
+        <h3><i class="fa-solid fa-sliders"></i> AI Enhancement Settings</h3>
+
+        <div class="settings-grid">
+          <div class="setting-item">
+            <label for="scaleSelect">Upscale Factor</label>
+            <select id="scaleSelect" class="select-input">
+              <option value="2">2x</option>
+              <option value="4" selected>4x (Real-ESRGAN)</option>
+            </select>
+          </div>
+
+          <div class="setting-item">
+            <label for="tileSelect">Tile Size (Memory Optimization)</label>
+            <select id="tileSelect" class="select-input">
+              <option value="0">No Tiling (Full Image)</option>
+              <option value="128">128 px</option>
+              <option value="256" selected>256 px</option>
+              <option value="512">512 px</option>
+            </select>
+          </div>
+
+          <div class="setting-item">
+            <label for="backendSelect">Compute Backend</label>
+            <select id="backendSelect" class="select-input">
+              <option value="webgpu">WebGPU (Fastest)</option>
+              <option value="wasm">WASM (Compatible)</option>
+            </select>
+          </div>
+
+          <div class="setting-item switch-item">
+            <label for="faceEnhanceToggle">Face Enhancement</label>
+            <label class="switch">
+              <input type="checkbox" id="faceEnhanceToggle" />
+              <span class="switch-slider"></span>
+            </label>
+          </div>
+
+          <div class="setting-item switch-item">
+            <label for="denoiseToggle">Denoise Pass</label>
+            <label class="switch">
+              <input type="checkbox" id="denoiseToggle" checked />
+              <span class="switch-slider"></span>
+            </label>
+          </div>
+
+          <div class="setting-item switch-item">
+            <label for="batchToggle">Batch Processing Mode</label>
+            <label class="switch">
+              <input type="checkbox" id="batchToggle" />
+              <span class="switch-slider"></span>
+            </label>
+          </div>
+        </div>
+      </div>
+
+      <!-- Action Buttons -->
+      <div class="action-buttons">
+        <button class="btn btn-primary btn-lg" id="enhanceBtn" disabled>
+          <i class="fa-solid fa-wand-magic-sparkles"></i> Enhance Now
+        </button>
+        <button class="btn btn-glass btn-lg" id="resetBtn">
+          <i class="fa-solid fa-rotate-left"></i> Reset
+        </button>
+      </div>
+
+      <!-- Batch File List -->
+      <div class="batch-list glass hidden" id="batchList">
+        <h4><i class="fa-solid fa-layer-group"></i> Batch Queue</h4>
+        <ul id="batchItems"></ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== PROGRESS SECTION ===================== -->
+  <section class="progress-section hidden" id="progressSection">
+    <div class="section-container">
+      <div class="progress-card glass">
+        <div class="progress-header">
+          <div class="progress-icon">
+            <i class="fa-solid fa-microchip spin-icon"></i>
+          </div>
+          <div>
+            <h3 id="progressTitle">Processing your media...</h3>
+            <p id="progressStage">Loading AI model...</p>
+          </div>
+        </div>
+
+        <div class="progress-bar-outer">
+          <div class="progress-bar-inner" id="progressBarInner" style="width:0%"></div>
+        </div>
+
+        <div class="progress-footer">
+          <span id="progressPercent">0%</span>
+          <span id="progressEta">Estimating time...</span>
+        </div>
+
+        <button class="btn btn-danger" id="cancelBtn">
+          <i class="fa-solid fa-stop"></i> Cancel Process
+        </button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== PREVIEW / COMPARE SECTION ===================== -->
+  <section class="compare-section hidden" id="compare">
+    <div class="section-container">
+      <h2 class="section-title"><i class="fa-solid fa-code-compare"></i> Before / After Comparison</h2>
+      <p class="section-subtitle">Drag the slider to compare original vs AI enhanced result</p>
+
+      <div class="compare-wrap glass" id="compareWrap">
+        <div class="compare-container" id="compareContainer">
+          <img src="" alt="Original" id="originalImage" class="compare-img" />
+          <div class="compare-after" id="compareAfter">
+            <img src="" alt="Enhanced" id="enhancedImage" class="compare-img" />
+          </div>
+          <div class="compare-slider-line" id="compareSliderLine">
+            <div class="compare-slider-handle">
+              <i class="fa-solid fa-left-right"></i>
+            </div>
+          </div>
+          <span class="compare-label label-before">Before</span>
+          <span class="compare-label label-after">After</span>
+        </div>
+
+        <!-- Video preview players (hidden unless video mode) -->
+        <div class="video-compare hidden" id="videoCompare">
+          <div class="video-box">
+            <span class="video-tag">Before</span>
+            <video id="originalVideo" controls></video>
+          </div>
+          <div class="video-box">
+            <span class="video-tag">After</span>
+            <video id="enhancedVideo" controls></video>
+          </div>
+        </div>
+      </div>
+
+      <div class="preview-controls">
+        <button class="btn btn-glass" id="playPauseBtn">
+          <i class="fa-solid fa-play"></i> Play
+        </button>
+        <button class="btn btn-glass" id="stopBtn">
+          <i class="fa-solid fa-stop"></i> Stop
+        </button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== DOWNLOAD SECTION ===================== -->
+  <section class="download-section hidden" id="downloadSection">
+    <div class="section-container">
+      <div class="download-card glass">
+        <div class="download-icon">
+          <i class="fa-solid fa-circle-check"></i>
+        </div>
+        <h3>Enhancement Complete!</h3>
+        <p id="downloadInfo">Your file has been enhanced successfully.</p>
+
+        <div class="result-stats">
+          <div class="result-stat">
+            <span class="result-label">Original Size</span>
+            <span class="result-value" id="originalSizeText">--</span>
+          </div>
+          <div class="result-stat">
+            <span class="result-label">Enhanced Size</span>
+            <span class="result-value" id="enhancedSizeText">--</span>
+          </div>
+          <div class="result-stat">
+            <span class="result-label">Resolution</span>
+            <span class="result-value" id="resolutionText">--</span>
+          </div>
+          <div class="result-stat">
+            <span class="result-label">Time Taken</span>
+            <span class="result-value" id="timeTakenText">--</span>
+          </div>
+        </div>
+
+        <div class="download-buttons">
+          <button class="btn btn-primary btn-lg" id="downloadBtn">
+            <i class="fa-solid fa-download"></i> Download Result
+          </button>
+          <button class="btn btn-glass btn-lg" id="enhanceAnotherBtn">
+            <i class="fa-solid fa-plus"></i> Enhance Another
+          </button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== FEATURES SECTION ===================== -->
+  <section class="features-section">
+    <div class="section-container">
+      <h2 class="section-title"><i class="fa-solid fa-star"></i> Why Choose AI Video Enhancer</h2>
+      <div class="features-grid">
+        <div class="feature-card glass">
+          <i class="fa-solid fa-lock feature-icon"></i>
+          <h3>100% Private</h3>
+          <p>All processing happens locally in your browser. Your files never leave your device.</p>
+        </div>
+        <div class="feature-card glass">
+          <i class="fa-solid fa-bolt feature-icon"></i>
+          <h3>Lightning Fast</h3>
+          <p>WebGPU acceleration delivers near-native inference speeds directly in browser.</p>
+        </div>
+        <div class="feature-card glass">
+          <i class="fa-solid fa-layer-group feature-icon"></i>
+          <h3>Tile Processing</h3>
+          <p>Smart tiling handles large images without running out of GPU memory.</p>
+        </div>
+        <div class="feature-card glass">
+          <i class="fa-solid fa-film feature-icon"></i>
+          <h3>Video Support</h3>
+          <p>Full video enhancement pipeline using FFmpeg.wasm frame extraction and merging.</p>
+        </div>
+        <div class="feature-card glass">
+          <i class="fa-solid fa-clone feature-icon"></i>
+          <h3>Batch Processing</h3>
+          <p>Queue multiple images and enhance them all in a single run.</p>
+        </div>
+        <div class="feature-card glass">
+          <i class="fa-solid fa-code-compare feature-icon"></i>
+          <h3>Live Comparison</h3>
+          <p>Interactive before/after slider to inspect enhancement quality in real time.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<!-- ===================== FOOTER ===================== -->
+<footer class="footer" id="footer">
+  <div class="footer-container">
+    <div class="footer-brand">
+      <div class="nav-logo">
+        <div class="logo-icon"><i class="fa-solid fa-wand-magic-sparkles"></i></div>
+        <span class="logo-text">AI Video <span class="accent">Enhancer</span></span>
+      </div>
+      <p>Open-source, browser-based AI media upscaler powered by Real-ESRGAN.</p>
+    </div>
+
+    <div class="footer-links">
+      <div class="footer-col">
+        <h4>Product</h4>
+        <a href="#home">Home</a>
+        <a href="#upload">Upload</a>
+        <a href="#dashboard">Dashboard</a>
+        <a href="#compare">Compare</a>
+      </div>
+      <div class="footer-col">
+        <h4>Technology</h4>
+        <a href="https://onnxruntime.ai/" target="_blank" rel="noopener">ONNX Runtime Web</a>
+        <a href="https://github.com/ffmpegwasm/ffmpeg.wasm" target="_blank" rel="noopener">FFmpeg.wasm</a>
+        <a href="https://github.com/xinntao/Real-ESRGAN" target="_blank" rel="noopener">Real-ESRGAN</a>
+      </div>
+      <div class="footer-col">
+        <h4>Connect</h4>
+        <a href="https://github.com" target="_blank" rel="noopener"><i class="fa-brands fa-github"></i> GitHub</a>
+      </div>
+    </div>
+  </div>
+  <div class="footer-bottom">
+    <p>&copy; <span id="currentYear"></span> AI Video Enhancer. Built with HTML, CSS &amp; Vanilla JS. All processing is 100% client-side.</p>
+  </div>
 </footer>
 
-<script src="https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort.min.js"></script>
+<!-- ===================== INFO / ABOUT MODAL ===================== -->
+<div class="modal-backdrop hidden" id="infoModalBackdrop">
+  <div class="modal glass">
+    <button class="modal-close" id="closeInfoModalBtn"><i class="fa-solid fa-xmark"></i></button>
+    <h3><i class="fa-solid fa-circle-info"></i> About This Engine</h3>
+    <p>This tool runs the Real-ESRGAN x4 super-resolution model fully inside your browser using ONNX Runtime Web, with WebGPU acceleration and WASM fallback. Video files are processed frame-by-frame using FFmpeg.wasm, enhanced with AI, then re-encoded into MP4.</p>
+  </div>
+</div>
 
-<script src="https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg/dist/ffmpeg.min.js"></script>
+<!-- ===================== EXTERNAL LIBRARIES ===================== -->
+<!-- ONNX Runtime Web (WebGPU + WASM backends) -->
+<script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.19.2/dist/ort.min.js"></script>
 
+<!-- FFmpeg.wasm Core -->
+<script src="https://unpkg.com/@ffmpeg/ffmpeg@0.12.10/dist/umd/ffmpeg.js"></script>
+<script src="https://unpkg.com/@ffmpeg/util@0.12.1/dist/umd/index.js"></script>
+
+<!-- ===================== APP SCRIPTS ===================== -->
 <script src="js/utils.js"></script>
-
-<script src="js/ui.js"></script>
-
-<script src="js/image.js"></script>
-
-<script src="js/video.js"></script>
-
 <script src="js/onnx.js"></script>
-
+<script src="js/image.js"></script>
+<script src="js/video.js"></script>
+<script src="js/ui.js"></script>
 <script src="script.js"></script>
 
 </body>
-
-</html>
-<div class="preview-card">
-
-<h2>Enhanced</h2>
-
-<img id="enhancedPreview" src="" alt="Enhanced">
-
-</div>
-
-</section>
-
-<section class="download-section">
-
-<button id="downloadBtn">
-
-<i class="fa-solid fa-download"></i>
-
-Download Result
-
-</button>
-
-</section>
-<section class="compare-section">
-
-<div class="compare-card">
-
-<h2>Before / After Comparison</h2>
-
-<div class="compare-container">
-
-<div class="compare-image">
-
-<img id="beforeImage" src="" alt="Before">
-
-</div>
-
-<div class="compare-image">
-
-<img id="afterImage" src="" alt="After">
-
-</div>
-
-</div>
-
-</div>
-
-</section>
-
-<section class="system-info">
-
-<div class="info-card">
-
-<i class="fa-solid fa-microchip"></i>
-
-<h3>AI Model</h3>
-
-<p>Real-ESRGAN x4 ONNX</p>
-
-</div>
-
-<div class="info-card">
-
-<i class="fa-solid fa-gauge-high"></i>
-
-<h3>GPU Status</h3>
-
-<p id="gpuStatus">Checking...</p>
-
-</div>
-
-<div class="info-card">
-
-<i class="fa-solid fa-memory"></i>
-
-<h3>Memory</h3>
-
-<p id="memoryStatus">Ready</p>
-
-</div>
-
-<div class="info-card">
-
-<i class="fa-solid fa-film"></i>
-
-<h3>Video Engine</h3>
-
-<p>FFmpeg.wasm</p>
-
-</div>
-
-</section>
-
-<footer>
-
-<div class="footer-content">
-
-<h2>AI Video Enhancer</h2>
-
-<p>
-
-Powered by Real-ESRGAN • ONNX Runtime Web • FFmpeg.wasm
-
-</p>
-
-<div class="footer-links">
-
-<a href="#">Privacy</a>
-
-<a href="#">Terms</a>
-
-<a href="#">GitHub</a>
-
-</div>
-
-</div>
-
-</footer>
-
-<script src="https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort.min.js"></script>
-
-<script src="https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg/dist/ffmpeg.min.js"></script>
-
-<script src="js/utils.js"></script>
-
-<script src="js/ui.js"></script>
-
-<script src="js/image.js"></script>
-
-<script src="js/video.js"></script>
-
-<script src="js/onnx.js"></script>
-
-<script src="script.js"></script>
-
-</body>
-
 </html>
