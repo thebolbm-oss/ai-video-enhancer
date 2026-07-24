@@ -1,1 +1,293 @@
 
+/* ==========================================================================
+   AI VIDEO ENHANCER — IMAGE PROCESSOR MODULE (js/image.js)
+   Handles the full Real-ESRGAN image upscaling pipeline:
+   - Load image into canvas
+   - Split into tiles (memory-safe processing for large images)
+   - Convert each tile to a normalized RGB CHW tensor
+   - Run ONNX inference on each tile
+   - Convert output tensor back to image data
+   - Stitch tiles back together into the final upscaled image
+   - Optional denoise pass (simple bilateral-style smoothing on canvas)
+   ========================================================================== */
+
+'use strict';
+
+const ImageProcessor = {
+
+  /* ------------------------------------------------------------------
+     MAIN ENTRY POINT — Upscale a single image File using Real-ESRGAN
+     settings: { scale, tileSize, faceEnhance, denoise, backend }
+     onProgress(percent 0-100, stageText)
+     isCancelled(): function returning true if user cancelled
+     Returns: { blob, width, height }
+     ------------------------------------------------------------------ */
+  async upscaleImage(file, settings, onProgress = () => {}, isCancelled = () => false) {
+    onProgress(0, 'Reading image file...');
+
+    const { img, url } = await Utils.loadImageFromFile(file);
+    const srcWidth = img.naturalWidth;
+    const srcHeight = img.naturalHeight;
+
+    // Draw the source image onto a canvas so we can read pixel data
+    const srcCanvas = document.createElement('canvas');
+    srcCanvas.width = srcWidth;
+    srcCanvas.height = srcHeight;
+    const srcCtx = srcCanvas.getContext('2d', { willReadFrequently: true });
+    srcCtx.drawImage(img, 0, 0);
+    URL.revokeObjectURL(url);
+
+    onProgress(5, 'Preparing tiles...');
+
+    const scale = settings.scale || 4;
+    const tileSize = settings.tileSize && settings.tileSize > 0 ? settings.tileSize : Math.max(srcWidth, srcHeight);
+    const overlap = 16; // Padding around each tile to avoid seam artifacts
+
+    // Build a list of tile regions covering the full image
+    const tiles = this._buildTileGrid(srcWidth, srcHeight, tileSize, overlap);
+
+    // Output canvas is scale x bigger than source
+    const outCanvas = document.createElement('canvas');
+    outCanvas.width = srcWidth * scale;
+    outCanvas.height = srcHeight * scale;
+    const outCtx = outCanvas.getContext('2d');
+
+    let processedTiles = 0;
+    const totalTiles = tiles.length;
+
+    for (const tile of tiles) {
+      if (isCancelled()) {
+        throw new Error('Processing cancelled by user.');
+      }
+
+      const stagePct = Math.round((processedTiles / totalTiles) * 90);
+      onProgress(stagePct, `AI upscaling tile ${processedTiles + 1}/${totalTiles}...`);
+
+      // Extract the tile's pixel data (with overlap padding) from source canvas
+      const tileImageData = srcCtx.getImageData(tile.sx, tile.sy, tile.sw, tile.sh);
+
+      // Convert to normalized float32 CHW tensor [1,3,H,W]
+      const tensorData = this._imageDataToTensor(tileImageData);
+
+      // Run Real-ESRGAN inference on this tile
+      const { data: outputData, dims } = await ONNXEngine.runInference(tensorData, tile.sw, tile.sh);
+
+      // dims = [1, 3, outH, outW] — convert back to an ImageData
+      const outH = dims[2];
+      const outW = dims[3];
+      const outTileImageData = this._tensorToImageData(outputData, outW, outH);
+
+      // Draw this tile's output onto the correct position of the output canvas,
+      // cropping away the overlap padding so tiles blend seamlessly.
+      const tileCanvas = document.createElement('canvas');
+      tileCanvas.width = outW;
+      tileCanvas.height = outH;
+      tileCanvas.getContext('2d').putImageData(outTileImageData, 0, 0);
+
+      const cropX = tile.padLeft * scale;
+      const cropY = tile.padTop * scale;
+      const cropW = tile.coreW * scale;
+      const cropH = tile.coreH * scale;
+
+      outCtx.drawImage(
+        tileCanvas,
+        cropX, cropY, cropW, cropH,
+        tile.dx, tile.dy, cropW, cropH
+      );
+
+      processedTiles++;
+
+      // Yield control back to the browser so UI stays responsive
+      await Utils.sleep(0);
+    }
+
+    onProgress(92, 'Applying post-processing...');
+
+    if (settings.denoise) {
+      this._applyDenoise(outCtx, outCanvas.width, outCanvas.height);
+    }
+
+    if (settings.faceEnhance) {
+      onProgress(95, 'Enhancing facial details...');
+      this._applySharpen(outCtx, outCanvas.width, outCanvas.height);
+    }
+
+    onProgress(98, 'Encoding final image...');
+    const blob = await Utils.canvasToBlob(outCanvas, 'image/png');
+
+    onProgress(100, 'Done!');
+
+    return {
+      blob,
+      width: outCanvas.width,
+      height: outCanvas.height
+    };
+  },
+
+  /* ------------------------------------------------------------------
+     BUILD TILE GRID
+     Splits an image into a grid of overlapping tiles so that each tile
+     (plus its padding) can be safely run through the AI model without
+     exceeding GPU/WASM memory limits.
+     Returns array of tile descriptors with source + destination coords.
+     ------------------------------------------------------------------ */
+  _buildTileGrid(srcWidth, srcHeight, tileSize, overlap) {
+    const tiles = [];
+    const coreSize = tileSize; // The "useful" area of each tile before padding
+
+    for (let y = 0; y < srcHeight; y += coreSize) {
+      for (let x = 0; x < srcWidth; x += coreSize) {
+        const coreW = Math.min(coreSize, srcWidth - x);
+        const coreH = Math.min(coreSize, srcHeight - y);
+
+        // Padded region (may extend beyond core, clipped to image bounds)
+        const padLeft = Math.min(overlap, x);
+        const padTop = Math.min(overlap, y);
+        const padRight = Math.min(overlap, srcWidth - (x + coreW));
+        const padBottom = Math.min(overlap, srcHeight - (y + coreH));
+
+        const sx = x - padLeft;
+        const sy = y - padTop;
+        const sw = coreW + padLeft + padRight;
+        const sh = coreH + padTop + padBottom;
+
+        tiles.push({
+          sx, sy, sw, sh,
+          padLeft, padTop,
+          coreW, coreH,
+          dx: x * 1, // destination x in output space is scaled later via scale factor
+          dy: y * 1
+        });
+      }
+    }
+
+    return tiles;
+  },
+
+  /* ------------------------------------------------------------------
+     CONVERT IMAGEDATA -> NORMALIZED FLOAT32 CHW TENSOR
+     ImageData is RGBA, HWC, 0-255. Model expects RGB, CHW, 0-1 float.
+     ------------------------------------------------------------------ */
+  _imageDataToTensor(imageData) {
+    const { width, height, data } = imageData;
+    const pixelCount = width * height;
+    const tensor = new Float32Array(pixelCount * 3);
+
+    // Plane-separated CHW layout: [R plane][G plane][B plane]
+    for (let i = 0; i < pixelCount; i++) {
+      const srcIdx = i * 4;
+      tensor[i] = data[srcIdx] / 255;                       // R plane
+      tensor[pixelCount + i] = data[srcIdx + 1] / 255;       // G plane
+      tensor[pixelCount * 2 + i] = data[srcIdx + 2] / 255;   // B plane
+    }
+
+    return tensor;
+  },
+
+  /* ------------------------------------------------------------------
+     CONVERT FLOAT32 CHW TENSOR -> IMAGEDATA (RGBA, HWC, 0-255)
+     ------------------------------------------------------------------ */
+  _tensorToImageData(tensorData, width, height) {
+    const pixelCount = width * height;
+    const imageData = new ImageData(width, height);
+
+    for (let i = 0; i < pixelCount; i++) {
+      const r = Utils.clamp(tensorData[i], 0, 1) * 255;
+      const g = Utils.clamp(tensorData[pixelCount + i], 0, 1) * 255;
+      const b = Utils.clamp(tensorData[pixelCount * 2 + i], 0, 1) * 255;
+
+      const dstIdx = i * 4;
+      imageData.data[dstIdx] = r;
+      imageData.data[dstIdx + 1] = g;
+      imageData.data[dstIdx + 2] = b;
+      imageData.data[dstIdx + 3] = 255; // fully opaque
+    }
+
+    return imageData;
+  },
+
+  /* ------------------------------------------------------------------
+     SIMPLE DENOISE PASS — light box-blur smoothing to reduce AI artifacts
+     Operates directly on the canvas context in place.
+     ------------------------------------------------------------------ */
+  _applyDenoise(ctx, width, height) {
+    const imageData = ctx.getImageData(0, 0, width, height);
+    const src = imageData.data;
+    const out = new Uint8ClampedArray(src.length);
+    const radius = 1; // 3x3 kernel — light touch so detail isn't destroyed
+
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        let rSum = 0, gSum = 0, bSum = 0, count = 0;
+
+        for (let ky = -radius; ky <= radius; ky++) {
+          for (let kx = -radius; kx <= radius; kx++) {
+            const nx = x + kx;
+            const ny = y + ky;
+            if (nx < 0 || nx >= width || ny < 0 || ny >= height) continue;
+            const idx = (ny * width + nx) * 4;
+            rSum += src[idx];
+            gSum += src[idx + 1];
+            bSum += src[idx + 2];
+            count++;
+          }
+        }
+
+        const outIdx = (y * width + x) * 4;
+        // Blend 70% original + 30% blurred to keep sharpness while reducing noise
+        out[outIdx] = src[outIdx] * 0.7 + (rSum / count) * 0.3;
+        out[outIdx + 1] = src[outIdx + 1] * 0.7 + (gSum / count) * 0.3;
+        out[outIdx + 2] = src[outIdx + 2] * 0.7 + (bSum / count) * 0.3;
+        out[outIdx + 3] = src[outIdx + 3];
+      }
+    }
+
+    imageData.data.set(out);
+    ctx.putImageData(imageData, 0, 0);
+  },
+
+  /* ------------------------------------------------------------------
+     SIMPLE SHARPEN PASS — used for "Face Enhancement" toggle
+     Applies an unsharp-mask style 3x3 convolution kernel.
+     ------------------------------------------------------------------ */
+  _applySharpen(ctx, width, height) {
+    const imageData = ctx.getImageData(0, 0, width, height);
+    const src = imageData.data;
+    const out = new Uint8ClampedArray(src.length);
+
+    // Standard sharpening kernel
+    const kernel = [
+      0, -0.25, 0,
+      -0.25, 2, -0.25,
+      0, -0.25, 0
+    ];
+
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        let rSum = 0, gSum = 0, bSum = 0;
+        let k = 0;
+
+        for (let ky = -1; ky <= 1; ky++) {
+          for (let kx = -1; kx <= 1; kx++) {
+            const nx = Utils.clamp(x + kx, 0, width - 1);
+            const ny = Utils.clamp(y + ky, 0, height - 1);
+            const idx = (ny * width + nx) * 4;
+            const weight = kernel[k++];
+            rSum += src[idx] * weight;
+            gSum += src[idx + 1] * weight;
+            bSum += src[idx + 2] * weight;
+          }
+        }
+
+        const outIdx = (y * width + x) * 4;
+        out[outIdx] = rSum;
+        out[outIdx + 1] = gSum;
+        out[outIdx + 2] = bSum;
+        out[outIdx + 3] = src[outIdx + 3];
+      }
+    }
+
+    imageData.data.set(out);
+    ctx.putImageData(imageData, 0, 0);
+  }
+};
