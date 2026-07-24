@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Video Enhancer</title>
+    <link rel="stylesheet" href="style.css">
+    
+    <!-- ONNX Runtime Web (AI Engine) -->
+    <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort.min.js"></script>
+    
+    <!-- FFmpeg.wasm (Video Manager) -->
+    <script src="https://unpkg.com/@ffmpeg/ffmpeg@0.12.0/dist/umd/ffmpeg.js"></script>
+</head>
+<body>
+    <div class="container">
+        <h1>AI Video Enhancer</h1>
+        <p>Client-side video upscaling</p>
+        
+        <input type="file" id="mediaUpload" accept="video/mp4, video/x-m4v, video/*">
+        <button id="enhanceBtn">Enhance Video</button>
+        
+        <div id="status">Ready to process...</div>
+        <div id="outputContainer"></div>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>
