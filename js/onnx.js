@@ -1,4 +1,3 @@
-
 /* ==========================================================================
    AI VIDEO ENHANCER — ONNX ENGINE MODULE (js/onnx.js)
    Handles:
@@ -17,9 +16,8 @@ const ONNXEngine = {
   isLoaded: false,        // Whether the model has been loaded into a session
   activeBackend: 'wasm',  // 'webgpu' | 'wasm' — whichever actually initialized
 
-  // Path to the model file. Place your real Real-ESRGAN ONNX file here,
-  // OR point this at a hosted .onnx URL (recommended so your repo stays light).
-  MODEL_PATH: 'models/realesrgan-x4.onnx',
+  // Model file hosted on GitHub Releases — free & unlimited bandwidth
+  MODEL_PATH: 'https://github.com/thebolbm-oss/ai-video-enhancer/releases/download/v1.0-model/realesrgan-x4.onnx',
 
   // Model input/output tensor name (standard for Real-ESRGAN ONNX exports)
   INPUT_NAME: 'input',
@@ -101,8 +99,8 @@ const ONNXEngine = {
       const response = await fetch(this.MODEL_PATH);
       if (!response.ok) {
         throw new Error(
-          `Model file not found at "${this.MODEL_PATH}". Make sure realesrgan-x4.onnx ` +
-          `is placed in the /models folder, or update ONNXEngine.MODEL_PATH to a hosted URL.`
+          `Model file not found at "${this.MODEL_PATH}". Check that the GitHub Release ` +
+          `asset exists and the URL is correct, or update ONNXEngine.MODEL_PATH.`
         );
       }
 
@@ -133,11 +131,6 @@ const ONNXEngine = {
       }
 
       onProgress(65, 'Building inference session...');
-
-      const sessionOptions = {
-        executionProviders: [],
-        graphOptimizationLevel: 'all'
-      };
 
       // Try preferred backend first, fall back automatically on failure
       const backendsToTry = this.activeBackend === 'webgpu'
