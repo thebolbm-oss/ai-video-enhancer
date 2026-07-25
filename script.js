@@ -164,6 +164,7 @@ document.addEventListener('DOMContentLoaded', () => {
     initActionButtons();
     initCompareControls();
     initDownloadControls();
+    initModelSetup();
     DebugPanel.log('success', 'All buttons and controls wired up.');
 
     setYear();
@@ -189,7 +190,11 @@ function cacheElements() {
     'downloadSection', 'downloadInfo', 'downloadBtn', 'enhanceAnotherBtn',
     'originalSizeText', 'enhancedSizeText', 'resolutionText', 'timeTakenText',
     'gpuStatus', 'backendStatus', 'memoryStatus', 'modelStatus',
-    'loadingOverlay', 'loadingText', 'currentYear'
+    'loadingOverlay', 'loadingText', 'currentYear',
+    // Model setup section (download link + upload box)
+    'modelDownloadLink', 'modelFileInput', 'modelUploadBtn',
+    'modelSetupProgress', 'modelProgressBarInner', 'modelProgressText',
+    'modelSetupStatus', 'modelClearBtn'
   ];
   ids.forEach(id => {
     App.els[id] = document.getElementById(id);
@@ -216,7 +221,9 @@ async function detectSystemCapabilities() {
 
     App.els.gpuStatus.textContent = gpuInfo.available ? gpuInfo.name : 'Not Available';
     App.els.backendStatus.textContent = gpuInfo.available ? 'WebGPU Ready' : 'WASM Only';
-    App.els.modelStatus.textContent = 'Idle (Not Loaded)';
+    if (!ONNXEngine.isLoaded) {
+      App.els.modelStatus.textContent = 'Idle (Not Loaded)';
+    }
 
     if (!gpuInfo.available) {
       App.els.backendSelect.value = 'wasm';
@@ -239,6 +246,121 @@ function updateMemoryUsage() {
   } else {
     App.els.memoryStatus.textContent = 'Unavailable';
   }
+}
+
+/* ==========================================================================
+   AI MODEL SETUP (Download link + Local Upload + Cache Storage)
+   ========================================================================== */
+async function initModelSetup() {
+  if (!App.els.modelUploadBtn || !App.els.modelFileInput) {
+    DebugPanel.log('warn', 'Model setup elements missing — skipping model setup init.');
+    return;
+  }
+
+  if (App.els.modelDownloadLink) {
+    App.els.modelDownloadLink.href = ONNXEngine.MODEL_DOWNLOAD_URL;
+  }
+
+  App.els.modelUploadBtn.addEventListener('click', () => App.els.modelFileInput.click());
+
+  App.els.modelFileInput.addEventListener('change', async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    if (!file.name.toLowerCase().endsWith('.onnx')) {
+      Utils.showNotification('error', 'Galat File', 'Sirf .onnx model file select karo.');
+      DebugPanel.log('warn', `Rejected non-.onnx file: ${file.name}`);
+      return;
+    }
+
+    await loadModelFromUpload(file);
+  });
+
+  if (App.els.modelClearBtn) {
+    App.els.modelClearBtn.addEventListener('click', async () => {
+      await ONNXEngine.clearCachedModel();
+      App.els.modelFileInput.value = '';
+      App.els.modelStatus.textContent = 'Idle (Not Loaded)';
+      App.els.enhanceBtn.disabled = true;
+      updateModelStatus('info', 'Saved model clear kar diya gaya. Dobara upload karo.');
+      Utils.showNotification('info', 'Model Cleared', 'Cached model hata diya gaya hai.');
+      DebugPanel.log('info', 'Cached model cleared by user.');
+    });
+  }
+
+  // On startup, check if a model was already uploaded + cached on a previous visit
+  DebugPanel.log('info', 'Checking for a previously cached model...');
+  const hasCached = await ONNXEngine.checkCachedModel();
+
+  if (hasCached) {
+    updateModelStatus('info', 'Saved model mila — load ho raha hai...');
+    App.els.modelSetupProgress.classList.remove('hidden');
+    App.els.modelStatus.textContent = 'Loading...';
+
+    try {
+      await ONNXEngine.init(App.settings.backend);
+      await ONNXEngine.loadModelFromCache((pct, stage) => updateModelProgress(pct, stage));
+      onModelReady();
+      DebugPanel.log('success', 'Cached model auto-loaded successfully.');
+    } catch (err) {
+      DebugPanel.log('warn', `Cached model load failed: ${err.message}`);
+      updateModelStatus('warn', 'Saved model load nahi ho paaya. Dobara upload karo.');
+      App.els.modelSetupProgress.classList.add('hidden');
+      App.els.modelStatus.textContent = 'Failed to Load';
+    }
+  } else {
+    updateModelStatus('info', 'Model download karke neeche upload karo shuru karne ke liye.');
+  }
+}
+
+async function loadModelFromUpload(file) {
+  App.els.modelSetupProgress.classList.remove('hidden');
+  App.els.modelStatus.textContent = 'Loading...';
+  updateModelStatus('info', `"${file.name}" load ho raha hai...`);
+  DebugPanel.log('info', `Loading model from uploaded file: ${file.name} (${Utils.formatBytes(file.size)})`);
+
+  try {
+    await ONNXEngine.init(App.settings.backend);
+    await ONNXEngine.loadModelFromFile(file, (pct, stage) => updateModelProgress(pct, stage));
+    onModelReady();
+    Utils.showNotification('success', 'Model Ready', 'Model load ho gaya aur agli baar ke liye save bhi ho gaya.');
+    DebugPanel.log('success', 'Model loaded from upload and cached successfully.');
+  } catch (err) {
+    DebugPanel.log('error', `Model upload/load failed: ${err.message}`);
+    updateModelStatus('error', `Load fail hua: ${err.message}`);
+    App.els.modelStatus.textContent = 'Failed to Load';
+    App.els.modelSetupProgress.classList.add('hidden');
+    Utils.showNotification('error', 'Model Load Failed', err.message);
+  }
+}
+
+function updateModelProgress(pct, stage) {
+  if (App.els.modelProgressBarInner) {
+    App.els.modelProgressBarInner.style.width = `${pct}%`;
+  }
+  if (App.els.modelProgressText) {
+    App.els.modelProgressText.textContent = `${pct}% — ${stage}`;
+  }
+}
+
+function onModelReady() {
+  App.els.modelSetupProgress.classList.add('hidden');
+  updateModelStatus('success', 'Model ready hai — ab "Enhance Now" use kar sakte ho.');
+  App.els.modelStatus.textContent = 'Loaded & Ready';
+  App.els.backendStatus.textContent = ONNXEngine.activeBackend === 'webgpu' ? 'WebGPU Active' : 'WASM Active';
+  App.els.enhanceBtn.disabled = !App.state.currentFile && App.state.batchQueue.length === 0;
+}
+
+function updateModelStatus(type, text) {
+  if (!App.els.modelSetupStatus) return;
+  const icons = {
+    info: 'fa-circle-info',
+    success: 'fa-circle-check',
+    warn: 'fa-triangle-exclamation',
+    error: 'fa-circle-exclamation'
+  };
+  App.els.modelSetupStatus.className = `model-setup-status ${type}`;
+  App.els.modelSetupStatus.innerHTML = `<i class="fa-solid ${icons[type] || icons.info}"></i> ${Utils.escapeHTML(text)}`;
 }
 
 /* ==========================================================================
@@ -349,9 +471,13 @@ function setCurrentFile(file) {
   App.state.originalURL = URL.createObjectURL(file);
 
   UI.renderFilePreview(file, App.state.originalURL, removeCurrentFile);
-  App.els.enhanceBtn.disabled = false;
+  App.els.enhanceBtn.disabled = !ONNXEngine.isLoaded;
 
   Utils.showNotification('info', 'File Ready', `"${file.name}" loaded successfully.`);
+
+  if (!ONNXEngine.isLoaded) {
+    Utils.showNotification('warning', 'Model Chahiye', 'Enhance karne se pehle "Setup AI Model" section me model upload karo.');
+  }
 }
 
 function removeCurrentFile() {
@@ -361,7 +487,7 @@ function removeCurrentFile() {
     App.state.originalURL = null;
   }
   App.els.fileInput.value = '';
-  App.els.enhanceBtn.disabled = App.state.batchQueue.length === 0;
+  App.els.enhanceBtn.disabled = App.state.batchQueue.length === 0 || !ONNXEngine.isLoaded;
   UI.resetUploadCard();
 }
 
@@ -378,7 +504,7 @@ function addToBatchQueue(file) {
   App.state.batchQueue.push(item);
   App.els.batchList.classList.remove('hidden');
   UI.renderBatchList(App.state.batchQueue, removeFromBatchQueue);
-  App.els.enhanceBtn.disabled = false;
+  App.els.enhanceBtn.disabled = !ONNXEngine.isLoaded;
   DebugPanel.log('info', `Added to batch queue: ${file.name}`);
 }
 
@@ -387,7 +513,7 @@ function removeFromBatchQueue(id) {
   UI.renderBatchList(App.state.batchQueue, removeFromBatchQueue);
   if (App.state.batchQueue.length === 0) {
     App.els.batchList.classList.add('hidden');
-    App.els.enhanceBtn.disabled = !App.state.currentFile;
+    App.els.enhanceBtn.disabled = !App.state.currentFile || !ONNXEngine.isLoaded;
   }
 }
 
@@ -450,6 +576,12 @@ function initActionButtons() {
 async function startEnhancement() {
   if (App.state.isProcessing) return;
 
+  if (!ONNXEngine.isLoaded) {
+    Utils.showNotification('error', 'Model Load Nahi Hua', 'Pehle "Setup AI Model" section me model download & upload karo.');
+    App.els.modelUploadBtn?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    return;
+  }
+
   DebugPanel.log('info', `Enhance button clicked. Mode: ${App.state.mode}, Batch: ${App.settings.batchMode}`);
   DebugPanel.log('info', `Settings: ${JSON.stringify(App.settings)}`);
 
@@ -475,7 +607,7 @@ async function startEnhancement() {
 }
 
 async function runSingleImagePipeline(file) {
-  beginProcessing('Enhancing Image', 'Loading AI model...');
+  beginProcessing('Enhancing Image', 'Preparing...');
   DebugPanel.log('info', `Starting single image pipeline for: ${file.name}`);
 
   try {
@@ -484,7 +616,7 @@ async function runSingleImagePipeline(file) {
     if (App.state.cancelled) return finishCancelled();
 
     UI.updateProgress(30, 'Preprocessing image...');
-    DebugPanel.log('info', 'Model loaded. Starting image upscale...');
+    DebugPanel.log('info', 'Model ready. Starting image upscale...');
 
     const result = await ImageProcessor.upscaleImage(file, App.settings, (pct, stage) => {
       const mapped = 30 + Math.round(pct * 0.65);
@@ -504,7 +636,7 @@ async function runSingleImagePipeline(file) {
 }
 
 async function runBatchImagePipeline() {
-  beginProcessing('Processing Batch', 'Loading AI model...');
+  beginProcessing('Processing Batch', 'Preparing...');
   DebugPanel.log('info', `Starting batch pipeline with ${App.state.batchQueue.length} files.`);
 
   try {
@@ -582,40 +714,20 @@ async function runVideoPipeline(file) {
   }
 }
 
-/* ---------------- SHARED HELPERS (simple, no cache/proxy logic) ---------------- */
+/* ---------------- SHARED HELPERS ---------------- */
 async function ensureModelLoaded() {
+  // The model is now loaded exclusively via the "Setup AI Model" section
+  // (download link + local upload), not fetched automatically here.
   if (ONNXEngine.isLoaded) {
-    UI.updateProgress(25, 'AI model already loaded, reusing session...');
+    UI.updateProgress(25, 'AI model ready, reusing existing session...');
     DebugPanel.log('info', 'Model already loaded — reusing existing session.');
     return;
   }
 
-  App.els.modelStatus.textContent = 'Loading...';
-  DebugPanel.log('info', `Attempting to fetch model from: ${ONNXEngine.MODEL_PATH}`);
-
-  try {
-    await ONNXEngine.init(App.settings.backend);
-    DebugPanel.log('success', `ONNX Runtime environment initialized. Preferred backend: ${App.settings.backend}`);
-
-    await ONNXEngine.loadModel((pct, stage) => {
-      UI.updateProgress(Math.round(pct * 0.25), stage);
-      DebugPanel.log('info', `[Model Load ${pct}%] ${stage}`);
-    });
-
-    App.els.modelStatus.textContent = 'Loaded & Ready';
-    App.els.backendStatus.textContent = ONNXEngine.activeBackend === 'webgpu' ? 'WebGPU Active' : 'WASM Active';
-    DebugPanel.log('success', `Model loaded successfully using ${ONNXEngine.activeBackend.toUpperCase()} backend.`);
-
-  } catch (err) {
-    App.els.modelStatus.textContent = 'Failed to Load';
-    DebugPanel.log('error', `MODEL LOAD FAILED: ${err.message}`);
-    DebugPanel.log('error', `Full error object: ${err.stack || JSON.stringify(err)}`);
-
-    throw new Error(
-      `AI model failed to download. Reason: "${err.message}". ` +
-      `Check the debug panel (bug icon, bottom-right) for full details.`
-    );
-  }
+  throw new Error(
+    'AI model not loaded. Go to the "Setup AI Model" section, download the model file, ' +
+    'then upload it there before enhancing.'
+  );
 }
 
 function beginProcessing(title, initialStage) {
