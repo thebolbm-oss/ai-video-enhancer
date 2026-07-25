@@ -1,23 +1,11 @@
 /* ==========================================================================
    AI VIDEO ENHANCER — MAIN APPLICATION SCRIPT (script.js)
-   This is the central orchestrator. It wires up every button, manages
-   global app state, and calls into the module files:
-   js/utils.js  -> Utils.*      (helpers: notifications, formatting, files)
-   js/onnx.js   -> ONNXEngine.* (ONNX Runtime Web / GPU detection / model)
-   js/image.js  -> ImageProcessor.* (Real-ESRGAN image upscaling pipeline)
-   js/video.js  -> VideoProcessor.* (FFmpeg.wasm video pipeline)
-   js/ui.js     -> UI.*          (DOM rendering / progress / compare slider)
-
-   DEBUG MODE: This version includes an on-screen Debug Panel that shows
-   every step, warning, and error directly on the website — no need to
-   open browser DevTools. Tap the bug icon (bottom-right) to open/close it.
    ========================================================================== */
 
 'use strict';
 
 /* ==========================================================================
    ON-SCREEN DEBUG PANEL
-   Shows every log/warning/error live on the page itself.
    ========================================================================== */
 const DebugPanel = {
   logs: [],
@@ -27,7 +15,6 @@ const DebugPanel = {
   isOpen: false,
 
   init() {
-    // Floating toggle button (bug icon)
     const toggleBtn = document.createElement('button');
     toggleBtn.id = 'debugToggleBtn';
     toggleBtn.innerHTML = '🐞';
@@ -41,7 +28,6 @@ const DebugPanel = {
     `;
     document.body.appendChild(toggleBtn);
 
-    // Debug panel container
     const panel = document.createElement('div');
     panel.id = 'debugPanel';
     panel.style.cssText = `
@@ -88,12 +74,10 @@ const DebugPanel = {
     if (this.logs.length > this.maxLogs) this.logs.shift();
     this.render();
 
-    // Auto-open panel automatically whenever a real error happens
     if (level === 'error') {
       this.toggle(true);
     }
 
-    // Mirror to real console too, for anyone who does have DevTools open
     if (level === 'error') console.error(`[${time}]`, message);
     else if (level === 'warn') console.warn(`[${time}]`, message);
     else console.log(`[${time}]`, message);
@@ -118,12 +102,10 @@ const DebugPanel = {
   }
 };
 
-// Catch every uncaught JS error, no matter how small, and show it on screen
 window.addEventListener('error', (e) => {
   DebugPanel.log('error', `Uncaught Error: ${e.message} (at ${e.filename}:${e.lineno}:${e.colno})`);
 });
 
-// Catch every unhandled promise rejection (most async/fetch errors land here)
 window.addEventListener('unhandledrejection', (e) => {
   const reason = e.reason && e.reason.message ? e.reason.message : String(e.reason);
   DebugPanel.log('error', `Unhandled Promise Rejection: ${reason}`);
@@ -134,14 +116,14 @@ window.addEventListener('unhandledrejection', (e) => {
    ========================================================================== */
 const App = {
   state: {
-    mode: 'image',              // 'image' | 'video'
-    currentFile: null,          // Currently selected single file
-    batchQueue: [],             // Array of { id, file, status } for batch mode
+    mode: 'image',
+    currentFile: null,
+    batchQueue: [],
     isProcessing: false,
     cancelled: false,
-    resultBlob: null,           // Final enhanced output blob
-    resultURL: null,            // Object URL of result
-    originalURL: null,          // Object URL of original file
+    resultBlob: null,
+    resultURL: null,
+    originalURL: null,
     startTime: null,
     processedCount: 0
   },
@@ -155,11 +137,11 @@ const App = {
     batchMode: false
   },
 
-  els: {} // Cached DOM elements, filled in cacheElements()
+  els: {}
 };
 
 /* ==========================================================================
-   INITIALIZATION — Runs once DOM is fully loaded
+   INITIALIZATION
    ========================================================================== */
 document.addEventListener('DOMContentLoaded', () => {
   DebugPanel.init();
@@ -191,9 +173,6 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 });
 
-/* ==========================================================================
-   CACHE DOM ELEMENTS
-   ========================================================================== */
 function cacheElements() {
   const ids = [
     'fileInput', 'dropZone', 'uploadCard', 'browseBtn', 'uploadHint',
@@ -227,7 +206,7 @@ function setYear() {
 }
 
 /* ==========================================================================
-   SYSTEM CAPABILITY DETECTION (GPU / Backend / Memory)
+   SYSTEM CAPABILITY DETECTION
    ========================================================================== */
 async function detectSystemCapabilities() {
   DebugPanel.log('info', 'Detecting GPU / WebGPU capability...');
@@ -263,7 +242,7 @@ function updateMemoryUsage() {
 }
 
 /* ==========================================================================
-   MODE SWITCH (Image / Video)
+   MODE SWITCH
    ========================================================================== */
 function initModeSwitch() {
   App.els.imageModeBtn.addEventListener('click', () => setMode('image'));
@@ -296,7 +275,7 @@ function setMode(mode) {
 }
 
 /* ==========================================================================
-   UPLOAD AREA — Drag & Drop + Browse + File Handling
+   UPLOAD AREA
    ========================================================================== */
 function initUploadArea() {
   const { dropZone, fileInput, browseBtn } = App.els;
@@ -413,7 +392,7 @@ function removeFromBatchQueue(id) {
 }
 
 /* ==========================================================================
-   AI SETTINGS PANEL — Sync UI controls into App.settings
+   AI SETTINGS PANEL
    ========================================================================== */
 function initSettingsPanel() {
   App.els.scaleSelect.addEventListener('change', (e) => {
@@ -460,7 +439,7 @@ function initSettingsPanel() {
 }
 
 /* ==========================================================================
-   ACTION BUTTONS — Enhance / Reset / Cancel
+   ACTION BUTTONS
    ========================================================================== */
 function initActionButtons() {
   App.els.enhanceBtn.addEventListener('click', startEnhancement);
@@ -495,7 +474,6 @@ async function startEnhancement() {
   }
 }
 
-/* ---------------- SINGLE IMAGE PIPELINE ---------------- */
 async function runSingleImagePipeline(file) {
   beginProcessing('Enhancing Image', 'Loading AI model...');
   DebugPanel.log('info', `Starting single image pipeline for: ${file.name}`);
@@ -525,7 +503,6 @@ async function runSingleImagePipeline(file) {
   }
 }
 
-/* ---------------- BATCH IMAGE PIPELINE ---------------- */
 async function runBatchImagePipeline() {
   beginProcessing('Processing Batch', 'Loading AI model...');
   DebugPanel.log('info', `Starting batch pipeline with ${App.state.batchQueue.length} files.`);
@@ -574,7 +551,6 @@ async function runBatchImagePipeline() {
   }
 }
 
-/* ---------------- VIDEO PIPELINE ---------------- */
 async function runVideoPipeline(file) {
   beginProcessing('Enhancing Video', 'Loading FFmpeg engine...');
   DebugPanel.log('info', `Starting video pipeline for: ${file.name}`);
@@ -606,7 +582,7 @@ async function runVideoPipeline(file) {
   }
 }
 
-/* ---------------- SHARED HELPERS ---------------- */
+/* ---------------- SHARED HELPERS (simple, no cache/proxy logic) ---------------- */
 async function ensureModelLoaded() {
   if (ONNXEngine.isLoaded) {
     UI.updateProgress(25, 'AI model already loaded, reusing session...');
@@ -615,36 +591,7 @@ async function ensureModelLoaded() {
   }
 
   App.els.modelStatus.textContent = 'Loading...';
-  
-  // Directly injecting the release download URL as requested
-  const MODEL_OVERRIDE_PATH = 'https://cdn.jsdelivr.net/gh/thebolbm-oss/ai-video-enhancer@main/models/realesrgan-x4.onnx';
-   
-  // ==========================================================================
-  // NEW UPDATE: CACHE INTERCEPT LOGIC
-  // Automatically check browser memory for the 66MB model before fetching CDN
-  // ==========================================================================
-  let finalModelPath = MODEL_OVERRIDE_PATH;
-  try {
-    const cache = await caches.open("real-esrgan-cache-v1");
-    // We check against the proxy release URL that our UI button downloads
-    const cachedResponse = await cache.match(CACHE_MODEL_URL);
-    if (cachedResponse) {
-      const blob = await cachedResponse.blob();
-      finalModelPath = URL.createObjectURL(blob);
-      DebugPanel.log('success', 'Local cached model found! Using offline version.');
-    }
-  } catch (e) {
-    DebugPanel.log('warn', 'Cache intercept check failed: ' + e.message);
-  }
-  // ==========================================================================
-
-  if (typeof ONNXEngine.setModelPath === 'function') {
-    ONNXEngine.setModelPath(finalModelPath); // Changed to use finalModelPath
-  } else {
-    ONNXEngine.MODEL_PATH = finalModelPath; // Changed to use finalModelPath
-  }
-
-  DebugPanel.log('info', `Attempting to fetch model from: ${finalModelPath.startsWith('blob:') ? 'Local Browser Cache (Blob URL)' : ONNXEngine.MODEL_PATH}`);
+  DebugPanel.log('info', `Attempting to fetch model from: ${ONNXEngine.MODEL_PATH}`);
 
   try {
     await ONNXEngine.init(App.settings.backend);
@@ -663,12 +610,10 @@ async function ensureModelLoaded() {
     App.els.modelStatus.textContent = 'Failed to Load';
     DebugPanel.log('error', `MODEL LOAD FAILED: ${err.message}`);
     DebugPanel.log('error', `Full error object: ${err.stack || JSON.stringify(err)}`);
-    DebugPanel.log('warn', 'Common causes: (1) CORS block on the model URL, (2) mobile network blocking large file fetch, (3) URL typo, (4) GitHub release still propagating — wait a few minutes and retry.');
 
     throw new Error(
       `AI model failed to download. Reason: "${err.message}". ` +
-      `Check the debug panel (bug icon, bottom-right) for full details. ` +
-      `Try switching between WiFi and mobile data, then tap Enhance again.`
+      `Check the debug panel (bug icon, bottom-right) for full details.`
     );
   }
 }
@@ -762,7 +707,7 @@ function completeVideoResult(originalFile, result) {
 }
 
 /* ==========================================================================
-   COMPARE SECTION CONTROLS (Play / Pause / Stop for video preview)
+   COMPARE SECTION CONTROLS
    ========================================================================== */
 function initCompareControls() {
   UI.initCompareSlider();
@@ -842,94 +787,3 @@ function fullReset() {
   DebugPanel.log('info', 'App reset to default state.');
   Utils.showNotification('info', 'Reset Complete', 'Ready for a new file.');
 }
-
-/* ==========================================================================
-   NEW UPDATE: MODEL DOWNLOADER & CACHE LOGIC
-   Handles downloading the 66MB model and storing it offline.
-   ========================================================================== */
-const CACHE_MODEL_URL = "https://corsproxy.io/?https://github.com/thebolbm-oss/ai-video-enhancer/releases/download/v1.0-model/realesrgan-x4.onnx";
-const CACHE_NAME = "real-esrgan-cache-v1";
-
-// 1. App load hote hi check karein ki Model Cache mein hai ya nahi
-window.addEventListener("DOMContentLoaded", async () => {
-  try {
-    const cache = await caches.open(CACHE_NAME);
-    const cachedResponse = await cache.match(CACHE_MODEL_URL);
-    
-    if (cachedResponse) {
-      const statusContainer = document.getElementById("model-status-container");
-      const modelStatus = document.getElementById("modelStatus");
-      
-      if (statusContainer) {
-        statusContainer.innerHTML = "<h3 style='color: #4ade80;'><i class='fa-solid fa-check-circle'></i> AI Model Ready (Offline Supported)</h3>";
-      }
-      if (modelStatus) {
-        modelStatus.innerText = "Ready (Cached)";
-      }
-      DebugPanel.log('success', 'App Initialization: Offline AI model detected in Cache.');
-    }
-  } catch (e) {
-    DebugPanel.log('warn', 'App Initialization Cache Check Failed: ' + e.message);
-  }
-});
-
-// 2. Button click hone par Model Download & Save karein
-// Global function banaya hai taaki HTML button ka onclick isko access kar sake
-window.downloadAndCacheModel = async function() {
-  const btn = document.getElementById("download-model-btn");
-  const progressContainer = document.getElementById("progress-container");
-  const progressBar = document.getElementById("download-progress");
-  const progressText = document.getElementById("progress-text");
-
-  if (!btn || !progressContainer) {
-    DebugPanel.log('error', 'Download UI elements not found in HTML!');
-    return;
-  }
-
-  btn.style.display = "none";
-  progressContainer.style.display = "block";
-  DebugPanel.log('info', 'Starting direct model download (66.2 MB) to browser cache...');
-
-  try {
-    const response = await fetch(CACHE_MODEL_URL);
-    if (!response.ok) throw new Error("Network error or GitHub link is down.");
-
-    const contentLength = response.headers.get("content-length");
-    const totalBytes = contentLength ? parseInt(contentLength, 10) : 66200000;
-    let loadedBytes = 0;
-
-    const reader = response.body.getReader();
-    const chunks = [];
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-
-      chunks.push(value);
-      loadedBytes += value.length;
-
-      if (totalBytes) {
-        const percent = Math.round((loadedBytes / totalBytes) * 100);
-        progressBar.value = percent;
-        progressText.innerText = `${percent}% (${(loadedBytes / (1024 * 1024)).toFixed(1)} MB)`;
-      }
-    }
-
-    const blob = new Blob(chunks);
-    const fullResponse = new Response(blob);
-    
-    const cache = await caches.open(CACHE_NAME);
-    await cache.put(CACHE_MODEL_URL, fullResponse);
-
-    document.getElementById("model-status-container").innerHTML = "<h3 style='color: #4ade80;'><i class='fa-solid fa-check-circle'></i> AI Model Downloaded & Ready!</h3>";
-    const modelStatus = document.getElementById("modelStatus");
-    if (modelStatus) modelStatus.innerText = "Ready (Cached)";
-    
-    DebugPanel.log('success', 'Model successfully downloaded and saved to internal cache for offline use!');
-  } catch (error) {
-    alert("Download fail ho gaya. Kripya internet connection check karein.");
-    btn.style.display = "inline-block";
-    progressContainer.style.display = "none";
-    DebugPanel.log('error', `Manual Download Failed: ${error.message}`);
-  }
-};
