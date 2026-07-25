@@ -57,6 +57,7 @@
 
     <ul class="nav-links" id="navLinks">
       <li><a href="#home" class="nav-link active"><i class="fa-solid fa-house"></i> Home</a></li>
+      <li><a href="#modelSetup" class="nav-link"><i class="fa-solid fa-download"></i> Setup Model</a></li>
       <li><a href="#upload" class="nav-link"><i class="fa-solid fa-upload"></i> Upload</a></li>
       <li><a href="#dashboard" class="nav-link"><i class="fa-solid fa-gauge-high"></i> Dashboard</a></li>
       <li><a href="#compare" class="nav-link"><i class="fa-solid fa-code-compare"></i> Compare</a></li>
@@ -85,6 +86,7 @@
   </div>
   <ul class="drawer-links">
     <li><a href="#home" class="drawer-link"><i class="fa-solid fa-house"></i> Home</a></li>
+    <li><a href="#modelSetup" class="drawer-link"><i class="fa-solid fa-download"></i> Setup Model</a></li>
     <li><a href="#upload" class="drawer-link"><i class="fa-solid fa-upload"></i> Upload</a></li>
     <li><a href="#dashboard" class="drawer-link"><i class="fa-solid fa-gauge-high"></i> Dashboard</a></li>
     <li><a href="#compare" class="drawer-link"><i class="fa-solid fa-code-compare"></i> Compare</a></li>
@@ -113,8 +115,8 @@
         to any server. 100% private.
       </p>
       <div class="hero-cta">
-        <a href="#upload" class="btn btn-primary">
-          <i class="fa-solid fa-bolt"></i> Start Enhancing
+        <a href="#modelSetup" class="btn btn-primary">
+          <i class="fa-solid fa-bolt"></i> Setup AI Model
         </a>
         <a href="#dashboard" class="btn btn-glass">
           <i class="fa-solid fa-chart-line"></i> View Dashboard
@@ -185,6 +187,55 @@
             <span class="dash-value" id="modelStatus">Idle</span>
           </div>
         </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== MODEL SETUP SECTION ===================== -->
+  <section class="model-setup-section" id="modelSetup">
+    <div class="section-container">
+      <h2 class="section-title"><i class="fa-solid fa-download"></i> Setup AI Model (One-Time)</h2>
+      <p class="section-subtitle">Model download karo aur neeche upload karo — sirf ek baar, phir hamesha offline chalega</p>
+
+      <div class="model-setup-card glass" id="modelSetupCard">
+
+        <div class="model-step">
+          <span class="model-step-num">1</span>
+          <div class="model-step-info">
+            <h4>Model File Download Karo</h4>
+            <p>Real-ESRGAN x4 ONNX model file apne device par save karo</p>
+          </div>
+          <a href="#" class="btn btn-primary" id="modelDownloadLink" download target="_blank" rel="noopener">
+            <i class="fa-solid fa-download"></i> Download
+          </a>
+        </div>
+
+        <div class="model-step">
+          <span class="model-step-num">2</span>
+          <div class="model-step-info">
+            <h4>Yahan Upload Karo</h4>
+            <p id="modelUploadHint">Downloaded .onnx file select karo AI engine activate karne ke liye</p>
+          </div>
+          <input type="file" id="modelFileInput" accept=".onnx" hidden />
+          <button class="btn btn-glass" id="modelUploadBtn">
+            <i class="fa-solid fa-upload"></i> Upload Model
+          </button>
+        </div>
+
+        <div class="model-setup-progress hidden" id="modelSetupProgress">
+          <div class="progress-bar-outer">
+            <div class="progress-bar-inner" id="modelProgressBarInner" style="width:0%"></div>
+          </div>
+          <span id="modelProgressText">0%</span>
+        </div>
+
+        <div class="model-setup-status" id="modelSetupStatus">
+          <i class="fa-solid fa-circle-info"></i> Model download karke neeche upload karo shuru karne ke liye.
+        </div>
+
+        <button class="btn btn-glass model-clear-btn" id="modelClearBtn">
+          <i class="fa-solid fa-trash"></i> Saved Model Clear Karo
+        </button>
       </div>
     </div>
   </section>
@@ -468,6 +519,7 @@
       <div class="footer-col">
         <h4>Product</h4>
         <a href="#home">Home</a>
+        <a href="#modelSetup">Setup Model</a>
         <a href="#upload">Upload</a>
         <a href="#dashboard">Dashboard</a>
         <a href="#compare">Compare</a>
@@ -494,7 +546,7 @@
   <div class="modal glass">
     <button class="modal-close" id="closeInfoModalBtn"><i class="fa-solid fa-xmark"></i></button>
     <h3><i class="fa-solid fa-circle-info"></i> About This Engine</h3>
-    <p>This tool runs the Real-ESRGAN x4 super-resolution model fully inside your browser using ONNX Runtime Web, with WebGPU acceleration and WASM fallback. Video files are processed frame-by-frame using FFmpeg.wasm, enhanced with AI, then re-encoded into MP4.</p>
+    <p>This tool runs the Real-ESRGAN x4 super-resolution model fully inside your browser using ONNX Runtime Web, with WebGPU acceleration and WASM fallback. You download the model once and upload it locally — nothing is ever sent to a server. Video files are processed frame-by-frame using FFmpeg.wasm, enhanced with AI, then re-encoded into MP4.</p>
   </div>
 </div>
 
