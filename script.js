@@ -194,7 +194,7 @@ function cacheElements() {
     // Model setup section (download link + upload box)
     'modelDownloadLink', 'modelFileInput', 'modelUploadBtn',
     'modelSetupProgress', 'modelProgressBarInner', 'modelProgressText',
-    'modelSetupStatus', 'modelClearBtn'
+    'modelSetupStatus', 'modelClearBtn', 'useLiteModelBtn'
   ];
   ids.forEach(id => {
     App.els[id] = document.getElementById(id);
@@ -259,6 +259,34 @@ async function initModelSetup() {
 
   if (App.els.modelDownloadLink) {
     App.els.modelDownloadLink.href = ONNXEngine.MODEL_DOWNLOAD_URL;
+  }
+
+  // "Use Lite Model" — instant, bundled in the repo, no download/upload needed
+  if (App.els.useLiteModelBtn) {
+    App.els.useLiteModelBtn.addEventListener('click', async () => {
+      if (App.state.isProcessing) {
+        Utils.showNotification('warning', 'Processing Active', 'Please wait for current process to finish.');
+        return;
+      }
+      App.els.modelSetupProgress.classList.remove('hidden');
+      App.els.modelStatus.textContent = 'Loading...';
+      updateModelStatus('info', 'Lite model load ho raha hai...');
+      DebugPanel.log('info', 'Loading lite model (bundled in repo, no download needed).');
+
+      try {
+        await ONNXEngine.init(App.settings.backend);
+        await ONNXEngine.loadLiteModel((pct, stage) => updateModelProgress(pct, stage));
+        onModelReady();
+        Utils.showNotification('success', 'Lite Model Ready', 'Turant use karo — light aur fast hai, quality thodi kam ho sakti hai.');
+        DebugPanel.log('success', 'Lite model loaded successfully.');
+      } catch (err) {
+        DebugPanel.log('error', `Lite model load failed: ${err.message}`);
+        updateModelStatus('error', `Load fail hua: ${err.message}`);
+        App.els.modelStatus.textContent = 'Failed to Load';
+        App.els.modelSetupProgress.classList.add('hidden');
+        Utils.showNotification('error', 'Lite Model Failed', err.message);
+      }
+    });
   }
 
   App.els.modelUploadBtn.addEventListener('click', () => App.els.modelFileInput.click());
@@ -345,8 +373,9 @@ function updateModelProgress(pct, stage) {
 
 function onModelReady() {
   App.els.modelSetupProgress.classList.add('hidden');
-  updateModelStatus('success', 'Model ready hai — ab "Enhance Now" use kar sakte ho.');
-  App.els.modelStatus.textContent = 'Loaded & Ready';
+  const modelLabel = ONNXEngine.activeModelType === 'lite' ? 'Lite Model' : 'Full Model (Real-ESRGAN)';
+  updateModelStatus('success', `${modelLabel} ready hai — ab "Enhance Now" use kar sakte ho.`);
+  App.els.modelStatus.textContent = `Loaded & Ready (${modelLabel})`;
   App.els.backendStatus.textContent = ONNXEngine.activeBackend === 'webgpu' ? 'WebGPU Active' : 'WASM Active';
   App.els.enhanceBtn.disabled = !App.state.currentFile && App.state.batchQueue.length === 0;
 }
