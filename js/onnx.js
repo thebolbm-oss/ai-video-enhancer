@@ -3,7 +3,10 @@
    Handles:
    - GPU / WebGPU capability detection
    - ONNX Runtime Web session initialization (WebGPU + WASM fallback)
-   - Loading the Real-ESRGAN x4 ONNX model
+   - Loading the Real-ESRGAN x4 ONNX model from a LOCAL file the user
+     downloads + uploads themselves (no server, no CORS issues)
+   - Caching the uploaded model in the browser's Cache Storage so the
+     user only has to upload it once — future visits auto-load it
    - Running inference on image tensors
    Requires: onnxruntime-web (loaded globally as `ort` via CDN script in index.html)
    ========================================================================== */
@@ -16,12 +19,18 @@ const ONNXEngine = {
   isLoaded: false,        // Whether the model has been loaded into a session
   activeBackend: 'wasm',  // 'webgpu' | 'wasm' — whichever actually initialized
 
-  // Model file hosted on GitHub Releases — free & unlimited bandwidth
-  MODEL_PATH: 'https://github.com/thebolbm-oss/ai-video-enhancer/releases/download/v1.0-model/realesrgan-x4.onnx',
-
   // Model input/output tensor name (standard for Real-ESRGAN ONNX exports)
   INPUT_NAME: 'input',
   OUTPUT_NAME: 'output',
+
+  // Direct download link shown to the user in the "Setup AI Model" section.
+  // Update this if you move the model to a different release/host.
+  MODEL_DOWNLOAD_URL: 'https://github.com/thebolbm-oss/ai-video-enhancer/releases/download/v1.0-model/realesrgan-x4.onnx',
+
+  // Cache Storage identifiers — this is how the model persists across visits
+  // once the user has uploaded it a single time.
+  CACHE_NAME: 'esrgan-model-cache-v1',
+  CACHE_KEY: '/local-model/realesrgan-x4.onnx',
 
   /* ------------------------------------------------------------------
      DETECT GPU / WEBGPU AVAILABILITY
@@ -82,94 +91,140 @@ const ONNXEngine = {
   },
 
   /* ------------------------------------------------------------------
-     LOAD THE REAL-ESRGAN MODEL INTO AN INFERENCE SESSION
-     onProgress(percent, stageText) is called throughout loading
+     CHECK IF A MODEL WAS ALREADY UPLOADED + CACHED ON A PREVIOUS VISIT
+     Returns true/false. Used at startup to auto-load without asking
+     the user to upload again.
      ------------------------------------------------------------------ */
-  async loadModel(onProgress = () => {}) {
+  async checkCachedModel() {
+    try {
+      if (!('caches' in window)) return false;
+      const cache = await caches.open(this.CACHE_NAME);
+      const match = await cache.match(this.CACHE_KEY);
+      return !!match;
+    } catch (e) {
+      console.warn('checkCachedModel failed:', e);
+      return false;
+    }
+  },
+
+  /* ------------------------------------------------------------------
+     LOAD MODEL FROM BROWSER CACHE (repeat visit — no re-upload needed)
+     onProgress(percent, stageText)
+     ------------------------------------------------------------------ */
+  async loadModelFromCache(onProgress = () => {}) {
     if (this.isLoaded && this.session) {
       onProgress(100, 'Model already loaded.');
       return this.session;
     }
 
-    try {
-      onProgress(5, 'Fetching Real-ESRGAN x4 model...');
+    onProgress(10, 'Found a saved model — reading from browser storage...');
+    const cache = await caches.open(this.CACHE_NAME);
+    const match = await cache.match(this.CACHE_KEY);
 
-      // Fetch the model manually first so we can report download progress,
-      // then hand the raw bytes to ONNX Runtime to build the session.
-      const response = await fetch(this.MODEL_PATH);
-      if (!response.ok) {
-        throw new Error(
-          `Model file not found at "${this.MODEL_PATH}". Check that the GitHub Release ` +
-          `asset exists and the URL is correct, or update ONNXEngine.MODEL_PATH.`
+    if (!match) {
+      throw new Error('No cached model found. Please upload the model file.');
+    }
+
+    const buffer = await match.arrayBuffer();
+    onProgress(40, 'Model bytes loaded from cache.');
+    return this._buildSession(buffer, onProgress);
+  },
+
+  /* ------------------------------------------------------------------
+     LOAD MODEL FROM A USER-UPLOADED FILE
+     Reads the file the user selected (after they downloaded it
+     manually), builds an inference session from it, and saves a copy
+     into Cache Storage so future visits don't require re-uploading.
+     onProgress(percent, stageText)
+     ------------------------------------------------------------------ */
+  async loadModelFromFile(file, onProgress = () => {}) {
+    if (!file) {
+      throw new Error('No model file provided.');
+    }
+
+    onProgress(5, `Reading "${file.name}"...`);
+    const buffer = await file.arrayBuffer();
+
+    if (!buffer || buffer.byteLength < 1024) {
+      throw new Error('This does not look like a valid model file (too small).');
+    }
+
+    onProgress(25, 'Saving model to browser storage for future visits...');
+    try {
+      if ('caches' in window) {
+        const cache = await caches.open(this.CACHE_NAME);
+        await cache.put(
+          this.CACHE_KEY,
+          new Response(buffer.slice(0), {
+            headers: {
+              'Content-Type': 'application/octet-stream',
+              'Content-Length': String(buffer.byteLength)
+            }
+          })
         );
       }
-
-      const contentLength = response.headers.get('content-length');
-      const total = contentLength ? parseInt(contentLength, 10) : 0;
-      const reader = response.body.getReader();
-      const chunks = [];
-      let received = 0;
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        chunks.push(value);
-        received += value.length;
-        if (total) {
-          const pct = 5 + Math.round((received / total) * 55); // 5-60%
-          onProgress(pct, `Downloading model... ${Utils.formatBytes(received)} / ${Utils.formatBytes(total)}`);
-        } else {
-          onProgress(30, `Downloading model... ${Utils.formatBytes(received)}`);
-        }
-      }
-
-      const modelBuffer = new Uint8Array(received);
-      let position = 0;
-      for (const chunk of chunks) {
-        modelBuffer.set(chunk, position);
-        position += chunk.length;
-      }
-
-      onProgress(65, 'Building inference session...');
-
-      // Try preferred backend first, fall back automatically on failure
-      const backendsToTry = this.activeBackend === 'webgpu'
-        ? ['webgpu', 'wasm']
-        : ['wasm'];
-
-      let session = null;
-      let lastError = null;
-
-      for (const backend of backendsToTry) {
-        try {
-          onProgress(75, `Initializing ${backend.toUpperCase()} execution provider...`);
-          session = await ort.InferenceSession.create(modelBuffer.buffer, {
-            executionProviders: [backend],
-            graphOptimizationLevel: 'all'
-          });
-          this.activeBackend = backend;
-          break;
-        } catch (err) {
-          console.warn(`Backend "${backend}" failed, trying next fallback...`, err);
-          lastError = err;
-        }
-      }
-
-      if (!session) {
-        throw lastError || new Error('Failed to initialize any execution provider.');
-      }
-
-      this.session = session;
-      this.isLoaded = true;
-
-      onProgress(100, `Model loaded successfully on ${this.activeBackend.toUpperCase()}.`);
-      return session;
-
-    } catch (err) {
-      this.isLoaded = false;
-      this.session = null;
-      throw err;
+    } catch (e) {
+      // Not fatal — model will still work for this session, just won't persist.
+      console.warn('Could not cache model for future visits:', e);
     }
+
+    return this._buildSession(buffer, onProgress);
+  },
+
+  /* ------------------------------------------------------------------
+     SHARED: BUILD THE ONNX RUNTIME SESSION FROM RAW MODEL BYTES
+     Tries the preferred backend first (WebGPU), falls back to WASM.
+     ------------------------------------------------------------------ */
+  async _buildSession(buffer, onProgress = () => {}) {
+    onProgress(60, 'Building inference session...');
+
+    const backendsToTry = this.activeBackend === 'webgpu'
+      ? ['webgpu', 'wasm']
+      : ['wasm'];
+
+    let session = null;
+    let lastError = null;
+
+    for (const backend of backendsToTry) {
+      try {
+        onProgress(75, `Initializing ${backend.toUpperCase()} execution provider...`);
+        session = await ort.InferenceSession.create(buffer, {
+          executionProviders: [backend],
+          graphOptimizationLevel: 'all'
+        });
+        this.activeBackend = backend;
+        break;
+      } catch (err) {
+        console.warn(`Backend "${backend}" failed, trying next fallback...`, err);
+        lastError = err;
+      }
+    }
+
+    if (!session) {
+      throw lastError || new Error('Failed to initialize any execution provider.');
+    }
+
+    this.session = session;
+    this.isLoaded = true;
+
+    onProgress(100, `Model ready on ${this.activeBackend.toUpperCase()}.`);
+    return session;
+  },
+
+  /* ------------------------------------------------------------------
+     CLEAR THE CACHED MODEL (e.g. user wants to re-upload a new version)
+     ------------------------------------------------------------------ */
+  async clearCachedModel() {
+    try {
+      if ('caches' in window) {
+        const cache = await caches.open(this.CACHE_NAME);
+        await cache.delete(this.CACHE_KEY);
+      }
+    } catch (e) {
+      console.warn('clearCachedModel failed:', e);
+    }
+    this.session = null;
+    this.isLoaded = false;
   },
 
   /* ------------------------------------------------------------------
@@ -179,7 +234,7 @@ const ONNXEngine = {
      ------------------------------------------------------------------ */
   async runInference(inputTensorData, width, height) {
     if (!this.isLoaded || !this.session) {
-      throw new Error('AI model is not loaded. Call loadModel() first.');
+      throw new Error('AI model is not loaded. Upload the model file in the "Setup AI Model" section first.');
     }
 
     const inputTensor = new ort.Tensor('float32', inputTensorData, [1, 3, height, width]);
@@ -203,6 +258,7 @@ const ONNXEngine = {
 
   /* ------------------------------------------------------------------
      DISPOSE SESSION — free GPU/WASM memory when no longer needed
+     (Does NOT clear the cached model file — just the in-memory session.)
      ------------------------------------------------------------------ */
   async dispose() {
     if (this.session) {
