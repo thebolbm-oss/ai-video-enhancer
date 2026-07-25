@@ -4,7 +4,9 @@
    Handles the full video enhancement pipeline using FFmpeg.wasm:
    - Load FFmpeg core (WASM binary) into memory
    - Extract video into individual frames (PNG sequence)
-   - Run each frame through Real-ESRGAN (via ImageProcessor logic)
+   - Run each frame through Real-ESRGAN (via ImageProcessor logic —
+     works automatically with either the full model or the lite model,
+     since ImageProcessor.upscaleImage() checks ONNXEngine.activeModelType)
    - Re-encode enhanced frames back into an MP4 using FFmpeg
    - Preserve original audio track by muxing it back in
    Requires: @ffmpeg/ffmpeg + @ffmpeg/util (loaded globally via CDN in index.html)
@@ -19,6 +21,15 @@ const VideoProcessor = {
 
   // FFmpeg core files served from CDN (matches @ffmpeg/ffmpeg version in index.html)
   CORE_BASE_URL: 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd',
+
+  // The main @ffmpeg/ffmpeg package spawns a Web Worker internally to run
+  // the heavy processing off the main thread. Browsers require Worker
+  // scripts to be same-origin (or a blob: URL) — a plain cross-origin CDN
+  // URL gets blocked with a SecurityError. We fix this the same way as the
+  // core files: fetch it and convert it to a same-origin blob: URL before
+  // handing it to FFmpeg.load(). This exact chunk filename ships with the
+  // @ffmpeg/ffmpeg@0.12.10 UMD build referenced in index.html.
+  WORKER_URL: 'https://unpkg.com/@ffmpeg/ffmpeg@0.12.10/dist/umd/814.ffmpeg.js',
 
   /* ------------------------------------------------------------------
      LOAD FFMPEG.WASM CORE
@@ -48,7 +59,7 @@ const VideoProcessor = {
       console.log('[FFmpeg]', message);
     });
 
-    onProgress(30, 'Downloading FFmpeg core (WASM)...');
+    onProgress(25, 'Downloading FFmpeg core (WASM)...');
 
     const coreURL = await FFmpegUtil.toBlobURL(
       `${this.CORE_BASE_URL}/ffmpeg-core.js`,
@@ -59,9 +70,25 @@ const VideoProcessor = {
       'application/wasm'
     );
 
-    onProgress(70, 'Starting FFmpeg core...');
+    onProgress(55, 'Downloading FFmpeg worker script...');
 
-    await this.ffmpeg.load({ coreURL, wasmURL });
+    // THE FIX: convert the worker script URL to a same-origin blob URL too,
+    // exactly like coreURL/wasmURL above — this is what was missing before
+    // and caused the "Failed to construct 'Worker'" SecurityError.
+    let classWorkerURL;
+    try {
+      classWorkerURL = await FFmpegUtil.toBlobURL(this.WORKER_URL, 'text/javascript');
+    } catch (e) {
+      throw new Error(
+        `Could not download the FFmpeg worker script from "${this.WORKER_URL}". ` +
+        `If FFmpeg updates its version, this chunk filename may have changed — ` +
+        `check unpkg.com/@ffmpeg/ffmpeg@0.12.10/dist/umd/ for the current worker chunk name.`
+      );
+    }
+
+    onProgress(75, 'Starting FFmpeg core...');
+
+    await this.ffmpeg.load({ coreURL, wasmURL, classWorkerURL });
 
     this.isLoaded = true;
     onProgress(100, 'FFmpeg ready.');
@@ -137,7 +164,9 @@ const VideoProcessor = {
       const frameBlob = new Blob([frameBytes.buffer], { type: 'image/png' });
       const frameFile = new File([frameBlob], frameName, { type: 'image/png' });
 
-      // Reuse the exact same tiling + inference pipeline used for images
+      // Reuse the exact same tiling + inference pipeline used for images.
+      // This automatically works with whichever model is active (full or lite) —
+      // ImageProcessor checks ONNXEngine.activeModelType internally.
       const result = await ImageProcessor.upscaleImage(
         frameFile,
         settings,
