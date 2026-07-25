@@ -165,6 +165,7 @@ document.addEventListener('DOMContentLoaded', () => {
     initCompareControls();
     initDownloadControls();
     initModelSetup();
+    initVideoEngineSetup();
     DebugPanel.log('success', 'All buttons and controls wired up.');
 
     setYear();
@@ -194,7 +195,11 @@ function cacheElements() {
     // Model setup section (download link + upload box)
     'modelDownloadLink', 'modelFileInput', 'modelUploadBtn',
     'modelSetupProgress', 'modelProgressBarInner', 'modelProgressText',
-    'modelSetupStatus', 'modelClearBtn', 'useLiteModelBtn'
+    'modelSetupStatus', 'modelClearBtn', 'useLiteModelBtn',
+    // Video engine setup (ffmpeg-core.wasm download + upload + cache)
+    'wasmDownloadLink', 'wasmFileInput', 'wasmUploadBtn',
+    'wasmSetupProgress', 'wasmProgressBarInner', 'wasmProgressText',
+    'wasmSetupStatus', 'wasmClearBtn'
   ];
   ids.forEach(id => {
     App.els[id] = document.getElementById(id);
@@ -390,6 +395,110 @@ function updateModelStatus(type, text) {
   };
   App.els.modelSetupStatus.className = `model-setup-status ${type}`;
   App.els.modelSetupStatus.innerHTML = `<i class="fa-solid ${icons[type] || icons.info}"></i> ${Utils.escapeHTML(text)}`;
+}
+
+/* ==========================================================================
+   VIDEO ENGINE SETUP (ffmpeg-core.wasm Download + Local Upload + Cache)
+   Same pattern as the AI model setup above — needed because this ~32MB
+   file is too big for GitHub's web "Upload files" UI (25MB cap), so it's
+   never committed to the repo. It's downloaded once by the user and
+   uploaded through this section instead, then cached in the browser.
+   ========================================================================== */
+async function initVideoEngineSetup() {
+  if (!App.els.wasmUploadBtn || !App.els.wasmFileInput) {
+    DebugPanel.log('warn', 'Video engine setup elements missing — skipping init.');
+    return;
+  }
+
+  if (App.els.wasmDownloadLink) {
+    App.els.wasmDownloadLink.href = VideoProcessor.WASM_DOWNLOAD_URL;
+  }
+
+  App.els.wasmUploadBtn.addEventListener('click', () => App.els.wasmFileInput.click());
+
+  App.els.wasmFileInput.addEventListener('change', async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    if (!file.name.toLowerCase().endsWith('.wasm')) {
+      Utils.showNotification('error', 'Galat File', 'Sirf ffmpeg-core.wasm file select karo.');
+      DebugPanel.log('warn', `Rejected non-.wasm file: ${file.name}`);
+      return;
+    }
+
+    App.els.wasmSetupProgress.classList.remove('hidden');
+    updateWasmStatus('info', `"${file.name}" load ho raha hai...`);
+    DebugPanel.log('info', `Loading ffmpeg-core.wasm from uploaded file: ${file.name} (${Utils.formatBytes(file.size)})`);
+
+    try {
+      await VideoProcessor.loadWasmFromFile(file, (pct, stage) => updateWasmProgress(pct, stage));
+      onWasmReady();
+      Utils.showNotification('success', 'Video Engine Ready', 'Ab video enhance kar sakte ho — agli baar upload nahi karna padega.');
+      DebugPanel.log('success', 'ffmpeg-core.wasm loaded from upload and cached successfully.');
+    } catch (err) {
+      DebugPanel.log('error', `Video engine load failed: ${err.message}`);
+      updateWasmStatus('error', `Load fail hua: ${err.message}`);
+      App.els.wasmSetupProgress.classList.add('hidden');
+      Utils.showNotification('error', 'Video Engine Failed', err.message);
+    }
+  });
+
+  if (App.els.wasmClearBtn) {
+    App.els.wasmClearBtn.addEventListener('click', async () => {
+      await VideoProcessor.clearCachedWasm();
+      App.els.wasmFileInput.value = '';
+      updateWasmStatus('info', 'Saved video engine clear kar diya gaya. Dobara upload karo.');
+      Utils.showNotification('info', 'Video Engine Cleared', 'Cached ffmpeg-core.wasm hata diya gaya hai.');
+      DebugPanel.log('info', 'Cached ffmpeg-core.wasm cleared by user.');
+    });
+  }
+
+  // On startup, check if the wasm was already uploaded + cached previously
+  DebugPanel.log('info', 'Checking for a previously cached video engine...');
+  const hasCached = await VideoProcessor.checkCachedWasm();
+
+  if (hasCached) {
+    updateWasmStatus('info', 'Saved video engine mila — load ho raha hai...');
+    App.els.wasmSetupProgress.classList.remove('hidden');
+
+    try {
+      await VideoProcessor.loadWasmFromCache((pct, stage) => updateWasmProgress(pct, stage));
+      onWasmReady();
+      DebugPanel.log('success', 'Cached ffmpeg-core.wasm auto-loaded successfully.');
+    } catch (err) {
+      DebugPanel.log('warn', `Cached video engine load failed: ${err.message}`);
+      updateWasmStatus('warn', 'Saved video engine load nahi ho paaya. Dobara upload karo.');
+      App.els.wasmSetupProgress.classList.add('hidden');
+    }
+  } else {
+    updateWasmStatus('info', 'Video enhance karne se pehle ye setup karo — image ke liye skip kar sakte ho.');
+  }
+}
+
+function updateWasmProgress(pct, stage) {
+  if (App.els.wasmProgressBarInner) {
+    App.els.wasmProgressBarInner.style.width = `${pct}%`;
+  }
+  if (App.els.wasmProgressText) {
+    App.els.wasmProgressText.textContent = `${pct}% — ${stage}`;
+  }
+}
+
+function onWasmReady() {
+  App.els.wasmSetupProgress.classList.add('hidden');
+  updateWasmStatus('success', 'Video engine ready hai — ab video enhance kar sakte ho.');
+}
+
+function updateWasmStatus(type, text) {
+  if (!App.els.wasmSetupStatus) return;
+  const icons = {
+    info: 'fa-circle-info',
+    success: 'fa-circle-check',
+    warn: 'fa-triangle-exclamation',
+    error: 'fa-circle-exclamation'
+  };
+  App.els.wasmSetupStatus.className = `model-setup-status ${type}`;
+  App.els.wasmSetupStatus.innerHTML = `<i class="fa-solid ${icons[type] || icons.info}"></i> ${Utils.escapeHTML(text)}`;
 }
 
 /* ==========================================================================
