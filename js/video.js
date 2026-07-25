@@ -19,20 +19,115 @@ const VideoProcessor = {
   ffmpeg: null,
   isLoaded: false,
 
-  // FFmpeg core files served from CDN (matches @ffmpeg/ffmpeg version in index.html)
-  CORE_BASE_URL: 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd',
+  // FFmpeg's JS glue code — small text files, self-hosted in this repo
+  // (same-origin) instead of a CDN. Required because browsers refuse to
+  // construct a Worker from a cross-origin script URL (unpkg.com), no
+  // matter what CORS headers are sent. Keeping everything same-origin fixes it.
+  CORE_BASE_URL: 'vendor/ffmpeg-core',
 
-  // The main @ffmpeg/ffmpeg package spawns a Web Worker internally to run
-  // the heavy processing off the main thread. Browsers require Worker
-  // scripts to be same-origin (or a blob: URL) — a plain cross-origin CDN
-  // URL gets blocked with a SecurityError. We fix this the same way as the
-  // core files: fetch it and convert it to a same-origin blob: URL before
-  // handing it to FFmpeg.load(). This exact chunk filename ships with the
-  // @ffmpeg/ffmpeg@0.12.10 UMD build referenced in index.html.
-  WORKER_URL: 'https://unpkg.com/@ffmpeg/ffmpeg@0.12.10/dist/umd/814.ffmpeg.js',
+  // ffmpeg-core.wasm is ~32MB — too big for GitHub's web "Upload files" UI,
+  // which caps browser uploads at 25MB per file. Instead of committing it
+  // to the repo, we use the same download+upload+cache pattern as the full
+  // Real-ESRGAN model: the user downloads it once from the CDN link below,
+  // uploads it through the "Setup Video Engine" section, and the browser
+  // saves it into Cache Storage so it's remembered on future visits.
+  WASM_DOWNLOAD_URL: 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd/ffmpeg-core.wasm',
+  WASM_CACHE_NAME: 'ffmpeg-core-cache-v1',
+  WASM_CACHE_KEY: '/local-wasm/ffmpeg-core.wasm',
+  wasmBlobURL: null, // set once the wasm has been loaded from cache or upload
+
+  /* ------------------------------------------------------------------
+     CHECK IF ffmpeg-core.wasm WAS ALREADY UPLOADED + CACHED ON A
+     PREVIOUS VISIT. Returns true/false.
+     ------------------------------------------------------------------ */
+  async checkCachedWasm() {
+    try {
+      if (!('caches' in window)) return false;
+      const cache = await caches.open(this.WASM_CACHE_NAME);
+      const match = await cache.match(this.WASM_CACHE_KEY);
+      return !!match;
+    } catch (e) {
+      console.warn('checkCachedWasm failed:', e);
+      return false;
+    }
+  },
+
+  /* ------------------------------------------------------------------
+     LOAD ffmpeg-core.wasm FROM BROWSER CACHE (repeat visit)
+     ------------------------------------------------------------------ */
+  async loadWasmFromCache(onProgress = () => {}) {
+    onProgress(10, 'Found a saved FFmpeg engine — reading from browser storage...');
+    const cache = await caches.open(this.WASM_CACHE_NAME);
+    const match = await cache.match(this.WASM_CACHE_KEY);
+    if (!match) {
+      throw new Error('No cached FFmpeg engine found. Please upload ffmpeg-core.wasm.');
+    }
+    const blob = await match.blob();
+    this.wasmBlobURL = URL.createObjectURL(blob);
+    onProgress(100, 'FFmpeg engine ready from cache.');
+    return this.wasmBlobURL;
+  },
+
+  /* ------------------------------------------------------------------
+     LOAD ffmpeg-core.wasm FROM A USER-UPLOADED FILE
+     Saves a copy into Cache Storage so future visits don't need re-upload.
+     ------------------------------------------------------------------ */
+  async loadWasmFromFile(file, onProgress = () => {}) {
+    if (!file) throw new Error('No file provided.');
+    onProgress(10, `Reading "${file.name}"...`);
+    const buffer = await file.arrayBuffer();
+
+    if (!buffer || buffer.byteLength < 1024 * 1024) {
+      throw new Error('This does not look like a valid ffmpeg-core.wasm file (too small).');
+    }
+
+    onProgress(40, 'Saving FFmpeg engine to browser storage for future visits...');
+    try {
+      if ('caches' in window) {
+        const cache = await caches.open(this.WASM_CACHE_NAME);
+        await cache.put(
+          this.WASM_CACHE_KEY,
+          new Response(buffer.slice(0), {
+            headers: {
+              'Content-Type': 'application/wasm',
+              'Content-Length': String(buffer.byteLength)
+            }
+          })
+        );
+      }
+    } catch (e) {
+      console.warn('Could not cache ffmpeg-core.wasm for future visits:', e);
+    }
+
+    const blob = new Blob([buffer], { type: 'application/wasm' });
+    this.wasmBlobURL = URL.createObjectURL(blob);
+    onProgress(100, 'FFmpeg engine ready.');
+    return this.wasmBlobURL;
+  },
+
+  /* ------------------------------------------------------------------
+     CLEAR THE CACHED WASM (e.g. user wants to re-upload a new version)
+     ------------------------------------------------------------------ */
+  async clearCachedWasm() {
+    try {
+      if ('caches' in window) {
+        const cache = await caches.open(this.WASM_CACHE_NAME);
+        await cache.delete(this.WASM_CACHE_KEY);
+      }
+    } catch (e) {
+      console.warn('clearCachedWasm failed:', e);
+    }
+    if (this.wasmBlobURL) {
+      URL.revokeObjectURL(this.wasmBlobURL);
+      this.wasmBlobURL = null;
+    }
+  },
 
   /* ------------------------------------------------------------------
      LOAD FFMPEG.WASM CORE
+     Requires this.wasmBlobURL to already be set via loadWasmFromCache()
+     or loadWasmFromFile() — call one of those first (script.js handles
+     this automatically in the "Setup Video Engine" section).
      onProgress(percent 0-100, stageText)
      ------------------------------------------------------------------ */
   async loadFFmpeg(onProgress = () => {}) {
@@ -41,54 +136,48 @@ const VideoProcessor = {
       return this.ffmpeg;
     }
 
+    if (!this.wasmBlobURL) {
+      throw new Error(
+        'FFmpeg engine (ffmpeg-core.wasm) is not set up yet. Go to the ' +
+        '"Setup Video Engine" section, download the file, and upload it there first.'
+      );
+    }
+
     if (typeof FFmpegWASM === 'undefined' && typeof FFmpeg === 'undefined') {
-      throw new Error('FFmpeg.wasm failed to load. Check your internet connection.');
+      throw new Error('FFmpeg.wasm failed to load. Check that vendor/ffmpeg/ffmpeg.js and vendor/ffmpeg-util/index.js exist in the repo.');
     }
 
     onProgress(10, 'Initializing FFmpeg engine...');
 
     // The UMD build exposes either `FFmpegWASM.FFmpeg` or `FFmpeg.FFmpeg`
-    // depending on CDN version — handle both gracefully.
+    // depending on build version — handle both gracefully.
     const FFmpegClass = (typeof FFmpegWASM !== 'undefined')
       ? FFmpegWASM.FFmpeg
       : FFmpeg.FFmpeg;
 
+    // Because ffmpeg.js is now loaded from vendor/ffmpeg/ffmpeg.js (same
+    // origin as this page), its internal Worker — which it creates from
+    // "814.ffmpeg.js" sitting right next to it in the same folder — now
+    // resolves as a same-origin script automatically. No more CORS/Worker
+    // SecurityError, and no special workarounds needed here.
     this.ffmpeg = new FFmpegClass();
 
     this.ffmpeg.on('log', ({ message }) => {
       console.log('[FFmpeg]', message);
     });
 
-    onProgress(25, 'Downloading FFmpeg core (WASM)...');
+    onProgress(30, 'Loading FFmpeg core (local files)...');
 
     const coreURL = await FFmpegUtil.toBlobURL(
       `${this.CORE_BASE_URL}/ffmpeg-core.js`,
       'text/javascript'
     );
-    const wasmURL = await FFmpegUtil.toBlobURL(
-      `${this.CORE_BASE_URL}/ffmpeg-core.wasm`,
-      'application/wasm'
-    );
+    // wasmURL comes from the already-uploaded/cached blob, not a fetch here
+    const wasmURL = this.wasmBlobURL;
 
-    onProgress(55, 'Downloading FFmpeg worker script...');
+    onProgress(70, 'Starting FFmpeg core...');
 
-    // THE FIX: convert the worker script URL to a same-origin blob URL too,
-    // exactly like coreURL/wasmURL above — this is what was missing before
-    // and caused the "Failed to construct 'Worker'" SecurityError.
-    let classWorkerURL;
-    try {
-      classWorkerURL = await FFmpegUtil.toBlobURL(this.WORKER_URL, 'text/javascript');
-    } catch (e) {
-      throw new Error(
-        `Could not download the FFmpeg worker script from "${this.WORKER_URL}". ` +
-        `If FFmpeg updates its version, this chunk filename may have changed — ` +
-        `check unpkg.com/@ffmpeg/ffmpeg@0.12.10/dist/umd/ for the current worker chunk name.`
-      );
-    }
-
-    onProgress(75, 'Starting FFmpeg core...');
-
-    await this.ffmpeg.load({ coreURL, wasmURL, classWorkerURL });
+    await this.ffmpeg.load({ coreURL, wasmURL });
 
     this.isLoaded = true;
     onProgress(100, 'FFmpeg ready.');
