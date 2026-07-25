@@ -619,13 +619,32 @@ async function ensureModelLoaded() {
   // Directly injecting the release download URL as requested
   const MODEL_OVERRIDE_PATH = 'https://cdn.jsdelivr.net/gh/thebolbm-oss/ai-video-enhancer@main/models/realesrgan-x4.onnx';
    
+  // ==========================================================================
+  // NEW UPDATE: CACHE INTERCEPT LOGIC
+  // Automatically check browser memory for the 66MB model before fetching CDN
+  // ==========================================================================
+  let finalModelPath = MODEL_OVERRIDE_PATH;
+  try {
+    const cache = await caches.open("real-esrgan-cache-v1");
+    // We check against the direct release URL that our UI button downloads
+    const cachedResponse = await cache.match("https://github.com/thebolbm-oss/ai-video-enhancer/releases/download/v1.0-model/realesrgan-x4.onnx");
+    if (cachedResponse) {
+      const blob = await cachedResponse.blob();
+      finalModelPath = URL.createObjectURL(blob);
+      DebugPanel.log('success', 'Local cached model found! Using offline version.');
+    }
+  } catch (e) {
+    DebugPanel.log('warn', 'Cache intercept check failed: ' + e.message);
+  }
+  // ==========================================================================
+
   if (typeof ONNXEngine.setModelPath === 'function') {
-    ONNXEngine.setModelPath(MODEL_OVERRIDE_PATH);
+    ONNXEngine.setModelPath(finalModelPath); // Changed to use finalModelPath
   } else {
-    ONNXEngine.MODEL_PATH = MODEL_OVERRIDE_PATH;
+    ONNXEngine.MODEL_PATH = finalModelPath; // Changed to use finalModelPath
   }
 
-  DebugPanel.log('info', `Attempting to fetch model from: ${ONNXEngine.MODEL_PATH}`);
+  DebugPanel.log('info', `Attempting to fetch model from: ${finalModelPath.startsWith('blob:') ? 'Local Browser Cache (Blob URL)' : ONNXEngine.MODEL_PATH}`);
 
   try {
     await ONNXEngine.init(App.settings.backend);
@@ -823,3 +842,94 @@ function fullReset() {
   DebugPanel.log('info', 'App reset to default state.');
   Utils.showNotification('info', 'Reset Complete', 'Ready for a new file.');
 }
+
+/* ==========================================================================
+   NEW UPDATE: MODEL DOWNLOADER & CACHE LOGIC
+   Handles downloading the 66MB model and storing it offline.
+   ========================================================================== */
+const CACHE_MODEL_URL = "https://github.com/thebolbm-oss/ai-video-enhancer/releases/download/v1.0-model/realesrgan-x4.onnx";
+const CACHE_NAME = "real-esrgan-cache-v1";
+
+// 1. App load hote hi check karein ki Model Cache mein hai ya nahi
+window.addEventListener("DOMContentLoaded", async () => {
+  try {
+    const cache = await caches.open(CACHE_NAME);
+    const cachedResponse = await cache.match(CACHE_MODEL_URL);
+    
+    if (cachedResponse) {
+      const statusContainer = document.getElementById("model-status-container");
+      const modelStatus = document.getElementById("modelStatus");
+      
+      if (statusContainer) {
+        statusContainer.innerHTML = "<h3 style='color: #4ade80;'><i class='fa-solid fa-check-circle'></i> AI Model Ready (Offline Supported)</h3>";
+      }
+      if (modelStatus) {
+        modelStatus.innerText = "Ready (Cached)";
+      }
+      DebugPanel.log('success', 'App Initialization: Offline AI model detected in Cache.');
+    }
+  } catch (e) {
+    DebugPanel.log('warn', 'App Initialization Cache Check Failed: ' + e.message);
+  }
+});
+
+// 2. Button click hone par Model Download & Save karein
+// Global function banaya hai taaki HTML button ka onclick isko access kar sake
+window.downloadAndCacheModel = async function() {
+  const btn = document.getElementById("download-model-btn");
+  const progressContainer = document.getElementById("progress-container");
+  const progressBar = document.getElementById("download-progress");
+  const progressText = document.getElementById("progress-text");
+
+  if (!btn || !progressContainer) {
+    DebugPanel.log('error', 'Download UI elements not found in HTML!');
+    return;
+  }
+
+  btn.style.display = "none";
+  progressContainer.style.display = "block";
+  DebugPanel.log('info', 'Starting direct model download (66.2 MB) to browser cache...');
+
+  try {
+    const response = await fetch(CACHE_MODEL_URL);
+    if (!response.ok) throw new Error("Network error or GitHub link is down.");
+
+    const contentLength = response.headers.get("content-length");
+    const totalBytes = contentLength ? parseInt(contentLength, 10) : 66200000;
+    let loadedBytes = 0;
+
+    const reader = response.body.getReader();
+    const chunks = [];
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      chunks.push(value);
+      loadedBytes += value.length;
+
+      if (totalBytes) {
+        const percent = Math.round((loadedBytes / totalBytes) * 100);
+        progressBar.value = percent;
+        progressText.innerText = `${percent}% (${(loadedBytes / (1024 * 1024)).toFixed(1)} MB)`;
+      }
+    }
+
+    const blob = new Blob(chunks);
+    const fullResponse = new Response(blob);
+    
+    const cache = await caches.open(CACHE_NAME);
+    await cache.put(CACHE_MODEL_URL, fullResponse);
+
+    document.getElementById("model-status-container").innerHTML = "<h3 style='color: #4ade80;'><i class='fa-solid fa-check-circle'></i> AI Model Downloaded & Ready!</h3>";
+    const modelStatus = document.getElementById("modelStatus");
+    if (modelStatus) modelStatus.innerText = "Ready (Cached)";
+    
+    DebugPanel.log('success', 'Model successfully downloaded and saved to internal cache for offline use!');
+  } catch (error) {
+    alert("Download fail ho gaya. Kripya internet connection check karein.");
+    btn.style.display = "inline-block";
+    progressContainer.style.display = "none";
+    DebugPanel.log('error', `Manual Download Failed: ${error.message}`);
+  }
+};
