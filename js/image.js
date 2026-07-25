@@ -9,6 +9,13 @@
    - Convert output tensor back to image data
    - Stitch tiles back together into the final upscaled image
    - Optional denoise pass (simple bilateral-style smoothing on canvas)
+
+   LITE MODEL SUPPORT: the bundled lite model (RealESR-general-x4v3) only
+   accepts fixed 128x128 input tiles. When it's the active model, every
+   tile — including partial tiles at the image edges — is padded up to
+   exactly 128x128 before inference, then the output is cropped back down
+   to the tile's real (unpadded) area before stitching. The full
+   Real-ESRGAN model keeps working exactly as before (dynamic tile sizes).
    ========================================================================== */
 
 'use strict';
@@ -40,8 +47,15 @@ const ImageProcessor = {
     onProgress(5, 'Preparing tiles...');
 
     const scale = settings.scale || 4;
-    const tileSize = settings.tileSize && settings.tileSize > 0 ? settings.tileSize : Math.max(srcWidth, srcHeight);
-    const overlap = 16; // Padding around each tile to avoid seam artifacts
+    const isLiteModel = ONNXEngine.activeModelType === 'lite';
+
+    // The lite model only accepts fixed-size 128x128 tiles — force that tile
+    // size regardless of what the user picked in Settings when it's active.
+    const tileSize = isLiteModel
+      ? ONNXEngine.LITE_MODEL_FIXED_TILE
+      : (settings.tileSize && settings.tileSize > 0 ? settings.tileSize : Math.max(srcWidth, srcHeight));
+
+    const overlap = isLiteModel ? 0 : 16; // Padding around each tile to avoid seam artifacts (full model only)
 
     // Build a list of tile regions covering the full image
     const tiles = this._buildTileGrid(srcWidth, srcHeight, tileSize, overlap);
@@ -66,16 +80,45 @@ const ImageProcessor = {
       // Extract the tile's pixel data (with overlap padding) from source canvas
       const tileImageData = srcCtx.getImageData(tile.sx, tile.sy, tile.sw, tile.sh);
 
-      // Convert to normalized float32 CHW tensor [1,3,H,W]
-      const tensorData = this._imageDataToTensor(tileImageData);
+      let outTileImageData, outW, outH, cropX, cropY, cropW, cropH;
 
-      // Run Real-ESRGAN inference on this tile
-      const { data: outputData, dims } = await ONNXEngine.runInference(tensorData, tile.sw, tile.sh);
+      if (isLiteModel) {
+        // ---- LITE MODEL PATH: pad tile up to fixed 128x128 before inference ----
+        const fixedSize = ONNXEngine.LITE_MODEL_FIXED_TILE;
+        const paddedImageData = this._padImageDataTo(tileImageData, fixedSize, fixedSize);
+        const tensorData = this._imageDataToTensor(paddedImageData);
 
-      // dims = [1, 3, outH, outW] — convert back to an ImageData
-      const outH = dims[2];
-      const outW = dims[3];
-      const outTileImageData = this._tensorToImageData(outputData, outW, outH);
+        const { data: outputData, dims } = await ONNXEngine.runInference(tensorData, fixedSize, fixedSize);
+
+        const paddedOutW = dims[3];
+        const paddedOutH = dims[2];
+        const paddedOutImageData = this._tensorToImageData(outputData, paddedOutW, paddedOutH);
+
+        // Crop the output back down to just the real (unpadded) tile area, scaled up
+        const realOutW = tile.sw * scale;
+        const realOutH = tile.sh * scale;
+        outTileImageData = this._cropImageData(paddedOutImageData, 0, 0, realOutW, realOutH);
+
+        outW = realOutW;
+        outH = realOutH;
+        cropX = 0;
+        cropY = 0;
+        cropW = tile.coreW * scale;
+        cropH = tile.coreH * scale;
+      } else {
+        // ---- FULL MODEL PATH: dynamic tile size, as before ----
+        const tensorData = this._imageDataToTensor(tileImageData);
+        const { data: outputData, dims } = await ONNXEngine.runInference(tensorData, tile.sw, tile.sh);
+
+        outH = dims[2];
+        outW = dims[3];
+        outTileImageData = this._tensorToImageData(outputData, outW, outH);
+
+        cropX = tile.padLeft * scale;
+        cropY = tile.padTop * scale;
+        cropW = tile.coreW * scale;
+        cropH = tile.coreH * scale;
+      }
 
       // Draw this tile's output onto the correct position of the output canvas,
       // cropping away the overlap padding so tiles blend seamlessly.
@@ -84,15 +127,10 @@ const ImageProcessor = {
       tileCanvas.height = outH;
       tileCanvas.getContext('2d').putImageData(outTileImageData, 0, 0);
 
-      const cropX = tile.padLeft * scale;
-      const cropY = tile.padTop * scale;
-      const cropW = tile.coreW * scale;
-      const cropH = tile.coreH * scale;
-
       outCtx.drawImage(
         tileCanvas,
         cropX, cropY, cropW, cropH,
-        tile.dx, tile.dy, cropW, cropH
+        tile.dx * scale, tile.dy * scale, cropW, cropH
       );
 
       processedTiles++;
@@ -130,6 +168,9 @@ const ImageProcessor = {
      (plus its padding) can be safely run through the AI model without
      exceeding GPU/WASM memory limits.
      Returns array of tile descriptors with source + destination coords.
+
+     NOTE: dx/dy are in SOURCE-image pixel space (unscaled); callers
+     multiply by `scale` when drawing onto the output canvas.
      ------------------------------------------------------------------ */
   _buildTileGrid(srcWidth, srcHeight, tileSize, overlap) {
     const tiles = [];
@@ -155,13 +196,74 @@ const ImageProcessor = {
           sx, sy, sw, sh,
           padLeft, padTop,
           coreW, coreH,
-          dx: x * 1, // destination x in output space is scaled later via scale factor
-          dy: y * 1
+          dx: x, // destination x in SOURCE-image pixel space (scaled later by caller)
+          dy: y
         });
       }
     }
 
     return tiles;
+  },
+
+  /* ------------------------------------------------------------------
+     PAD IMAGEDATA UP TO A FIXED WIDTH/HEIGHT (bottom/right padding,
+     replicating edge pixels so the model doesn't see a hard black edge)
+     Used only for the lite model's fixed 128x128 input requirement.
+     ------------------------------------------------------------------ */
+  _padImageDataTo(imageData, targetWidth, targetHeight) {
+    const { width, height } = imageData;
+    if (width === targetWidth && height === targetHeight) {
+      return imageData;
+    }
+
+    const canvas = document.createElement('canvas');
+    canvas.width = targetWidth;
+    canvas.height = targetHeight;
+    const ctx = canvas.getContext('2d');
+
+    // Draw the source tile first
+    const srcCanvas = document.createElement('canvas');
+    srcCanvas.width = width;
+    srcCanvas.height = height;
+    srcCanvas.getContext('2d').putImageData(imageData, 0, 0);
+    ctx.drawImage(srcCanvas, 0, 0);
+
+    // Replicate the last column to fill the right padding
+    if (width < targetWidth) {
+      ctx.drawImage(srcCanvas, width - 1, 0, 1, height, width, 0, targetWidth - width, height);
+    }
+    // Replicate the last row (now including the right padding we just drew) to fill bottom padding
+    if (height < targetHeight) {
+      const currentImg = ctx.getImageData(0, 0, targetWidth, height);
+      const rowCanvas = document.createElement('canvas');
+      rowCanvas.width = targetWidth;
+      rowCanvas.height = 1;
+      rowCanvas.getContext('2d').putImageData(
+        ctx.getImageData(0, height - 1, targetWidth, 1), 0, 0
+      );
+      ctx.drawImage(rowCanvas, 0, height, targetWidth, targetHeight - height);
+    }
+
+    return ctx.getImageData(0, 0, targetWidth, targetHeight);
+  },
+
+  /* ------------------------------------------------------------------
+     CROP IMAGEDATA DOWN TO A SMALLER REGION (top-left aligned)
+     Used to strip the lite model's padding back off after inference.
+     ------------------------------------------------------------------ */
+  _cropImageData(imageData, x, y, w, h) {
+    const canvas = document.createElement('canvas');
+    canvas.width = imageData.width;
+    canvas.height = imageData.height;
+    canvas.getContext('2d').putImageData(imageData, 0, 0);
+
+    const outCanvas = document.createElement('canvas');
+    outCanvas.width = w;
+    outCanvas.height = h;
+    const outCtx = outCanvas.getContext('2d');
+    outCtx.drawImage(canvas, x, y, w, h, 0, 0, w, h);
+
+    return outCtx.getImageData(0, 0, w, h);
   },
 
   /* ------------------------------------------------------------------
