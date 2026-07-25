@@ -186,6 +186,25 @@
           </div>
         </div>
       </div>
+
+      <!-- ===================== NEW MODEL DOWNLOADER UI ADDED HERE ===================== -->
+      <div class="model-cache-card glass" style="margin-top: 2rem; padding: 2rem; border-radius: 16px; text-align: center;">
+        <h3 style="margin-bottom: 10px;"><i class="fa-solid fa-cloud-arrow-down"></i> Offline AI Model Setup</h3>
+        <p style="margin-bottom: 20px; font-size: 0.95rem; opacity: 0.8;">Download the 66MB Real-ESRGAN model once. It will be saved securely in your browser's local memory for fast, offline enhancements in the future!</p>
+        
+        <div id="model-status-container">
+          <button class="btn btn-primary btn-lg" id="download-model-btn" onclick="downloadAndCacheModel()">
+            <i class="fa-solid fa-download"></i> Download AI Model (66 MB)
+          </button>
+          
+          <div id="progress-container" style="display: none; margin-top: 15px;">
+            <progress id="download-progress" value="0" max="100" style="width: 100%; max-width: 400px; height: 15px; border-radius: 8px;"></progress>
+            <div style="margin-top: 10px; font-weight: 600; font-family: monospace; font-size: 1.1rem;"><span id="progress-text">0%</span></div>
+          </div>
+        </div>
+      </div>
+      <!-- ============================================================================== -->
+
     </div>
   </section>
 
@@ -513,6 +532,77 @@
 <script src="js/video.js"></script>
 <script src="js/ui.js"></script>
 <script src="script.js"></script>
+
+<!-- ===================== NEW MODEL CACHE SCRIPT ADDED HERE ===================== -->
+<script>
+const MODEL_URL = "https://github.com/thebolbm-oss/ai-video-enhancer/releases/download/v1.0-model/realesrgan-x4.onnx";
+const CACHE_NAME = "real-esrgan-cache-v1";
+
+window.addEventListener("DOMContentLoaded", async () => {
+  try {
+    const cache = await caches.open(CACHE_NAME);
+    const cachedResponse = await cache.match(MODEL_URL);
+
+    if (cachedResponse) {
+      document.getElementById("model-status-container").innerHTML = "<h3 style='color: #4ade80;'><i class='fa-solid fa-check-circle'></i> AI Model Ready (Offline Supported)</h3>";
+      document.getElementById("modelStatus").innerText = "Ready (Cached)";
+    }
+  } catch (e) {
+    console.error("Cache check failed", e);
+  }
+});
+
+async function downloadAndCacheModel() {
+  const btn = document.getElementById("download-model-btn");
+  const progressContainer = document.getElementById("progress-container");
+  const progressBar = document.getElementById("download-progress");
+  const progressText = document.getElementById("progress-text");
+
+  btn.style.display = "none";
+  progressContainer.style.display = "block";
+
+  try {
+    const response = await fetch(MODEL_URL);
+    if (!response.ok) throw new Error("Network response was not ok");
+
+    const contentLength = response.headers.get("content-length");
+    const totalBytes = contentLength ? parseInt(contentLength, 10) : 66200000; // fallback to ~66MB
+    let loadedBytes = 0;
+
+    const reader = response.body.getReader();
+    const chunks = [];
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      chunks.push(value);
+      loadedBytes += value.length;
+
+      if (totalBytes) {
+        const percent = Math.round((loadedBytes / totalBytes) * 100);
+        progressBar.value = percent;
+        progressText.innerText = `${percent}% (${(loadedBytes / (1024 * 1024)).toFixed(1)} MB)`;
+      }
+    }
+
+    const blob = new Blob(chunks);
+    const fullResponse = new Response(blob);
+    
+    const cache = await caches.open(CACHE_NAME);
+    await cache.put(MODEL_URL, fullResponse);
+
+    document.getElementById("model-status-container").innerHTML = "<h3 style='color: #4ade80;'><i class='fa-solid fa-check-circle'></i> AI Model Downloaded & Ready!</h3>";
+    document.getElementById("modelStatus").innerText = "Ready (Cached)";
+  } catch (error) {
+    alert("Download failed. Please check your internet connection.");
+    btn.style.display = "inline-block";
+    progressContainer.style.display = "none";
+    console.error(error);
+  }
+}
+</script>
+<!-- ============================================================================== -->
 
 </body>
 </html>
