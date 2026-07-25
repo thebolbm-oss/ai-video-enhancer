@@ -626,8 +626,8 @@ async function ensureModelLoaded() {
   let finalModelPath = MODEL_OVERRIDE_PATH;
   try {
     const cache = await caches.open("real-esrgan-cache-v1");
-    // We check against the direct release URL that our UI button downloads
-    const cachedResponse = await cache.match("https://github.com/thebolbm-oss/ai-video-enhancer/releases/download/v1.0-model/realesrgan-x4.onnx");
+    // We check against the proxy release URL that our UI button downloads
+    const cachedResponse = await cache.match(CACHE_MODEL_URL);
     if (cachedResponse) {
       const blob = await cachedResponse.blob();
       finalModelPath = URL.createObjectURL(blob);
@@ -847,7 +847,7 @@ function fullReset() {
    NEW UPDATE: MODEL DOWNLOADER & CACHE LOGIC
    Handles downloading the 66MB model and storing it offline.
    ========================================================================== */
-const CACHE_MODEL_URL = "https://github.com/thebolbm-oss/ai-video-enhancer/releases/download/v1.0-model/realesrgan-x4.onnx";
+const CACHE_MODEL_URL = "https://corsproxy.io/?https://github.com/thebolbm-oss/ai-video-enhancer/releases/download/v1.0-model/realesrgan-x4.onnx";
 const CACHE_NAME = "real-esrgan-cache-v1";
 
 // 1. App load hote hi check karein ki Model Cache mein hai ya nahi
