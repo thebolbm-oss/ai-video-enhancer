@@ -252,7 +252,54 @@
     </div>
   </section>
 
-  <!-- ===================== UPLOAD SECTION ===================== -->
+  <!-- ===================== VIDEO ENGINE SETUP SECTION ===================== -->
+  <section class="model-setup-section" id="videoEngineSetup">
+    <div class="section-container">
+      <h2 class="section-title"><i class="fa-solid fa-film"></i> Setup Video Engine (One-Time)</h2>
+      <p class="section-subtitle">Sirf video enhance karne ke liye chahiye — image ke liye zaroori nahi. Download karo aur neeche upload karo.</p>
+
+      <div class="model-setup-card glass" id="videoEngineSetupCard">
+
+        <div class="model-step">
+          <span class="model-step-num">1</span>
+          <div class="model-step-info">
+            <h4>FFmpeg Engine File Download Karo</h4>
+            <p>ffmpeg-core.wasm (~32 MB) apne device par save karo</p>
+          </div>
+          <a href="#" class="btn btn-primary" id="wasmDownloadLink" download target="_blank" rel="noopener">
+            <i class="fa-solid fa-download"></i> Download
+          </a>
+        </div>
+
+        <div class="model-step">
+          <span class="model-step-num">2</span>
+          <div class="model-step-info">
+            <h4>Yahan Upload Karo</h4>
+            <p>Downloaded ffmpeg-core.wasm file select karo</p>
+          </div>
+          <input type="file" id="wasmFileInput" accept=".wasm" hidden />
+          <button class="btn btn-glass" id="wasmUploadBtn">
+            <i class="fa-solid fa-upload"></i> Upload Engine
+          </button>
+        </div>
+
+        <div class="model-setup-progress hidden" id="wasmSetupProgress">
+          <div class="progress-bar-outer">
+            <div class="progress-bar-inner" id="wasmProgressBarInner" style="width:0%"></div>
+          </div>
+          <span id="wasmProgressText">0%</span>
+        </div>
+
+        <div class="model-setup-status" id="wasmSetupStatus">
+          <i class="fa-solid fa-circle-info"></i> Video enhance karne se pehle ye setup karo — image ke liye skip kar sakte ho.
+        </div>
+
+        <button class="btn btn-glass model-clear-btn" id="wasmClearBtn">
+          <i class="fa-solid fa-trash"></i> Saved Engine Clear Karo
+        </button>
+      </div>
+    </div>
+  </section>
   <section class="upload-section" id="upload">
     <div class="section-container">
       <h2 class="section-title"><i class="fa-solid fa-upload"></i> Upload Your Media</h2>
@@ -566,9 +613,11 @@
 <!-- ONNX Runtime Web (WebGPU + WASM backends) -->
 <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.19.2/dist/ort.min.js"></script>
 
-<!-- FFmpeg.wasm Core -->
-<script src="https://unpkg.com/@ffmpeg/ffmpeg@0.12.10/dist/umd/ffmpeg.js"></script>
-<script src="https://unpkg.com/@ffmpeg/util@0.12.1/dist/umd/index.js"></script>
+<!-- FFmpeg.wasm Core — self-hosted locally to avoid cross-origin Worker
+     restrictions (browsers block constructing a Worker from a script on
+     a different origin, even with CORS headers). Same-origin files fix this. -->
+<script src="vendor/ffmpeg/ffmpeg.js"></script>
+<script src="vendor/ffmpeg-util/index.js"></script>
 
 <!-- ===================== APP SCRIPTS ===================== -->
 <script src="js/utils.js"></script>
