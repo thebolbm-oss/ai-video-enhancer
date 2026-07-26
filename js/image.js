@@ -49,13 +49,17 @@ const ImageProcessor = {
     const scale = settings.scale || 4;
     const isLiteModel = ONNXEngine.activeModelType === 'lite';
 
-    // The lite model only accepts fixed-size 128x128 tiles — force that tile
-    // size regardless of what the user picked in Settings when it's active.
+    // The lite model only accepts fixed-size 128x128 tiles. To still get
+    // seamless stitching, we shrink the "core" tile size so that core +
+    // overlap-on-both-sides adds up to exactly 128 (its fixed input size).
+    const LITE_OVERLAP = 16;
+    const FULL_OVERLAP = 24; // slightly larger than before for a smoother blend band
+
     const tileSize = isLiteModel
-      ? ONNXEngine.LITE_MODEL_FIXED_TILE
+      ? (ONNXEngine.LITE_MODEL_FIXED_TILE - 2 * LITE_OVERLAP) // 128 - 32 = 96
       : (settings.tileSize && settings.tileSize > 0 ? settings.tileSize : Math.max(srcWidth, srcHeight));
 
-    const overlap = isLiteModel ? 0 : 16; // Padding around each tile to avoid seam artifacts (full model only)
+    const overlap = isLiteModel ? LITE_OVERLAP : FULL_OVERLAP;
 
     // Build a list of tile regions covering the full image
     const tiles = this._buildTileGrid(srcWidth, srcHeight, tileSize, overlap);
@@ -80,7 +84,7 @@ const ImageProcessor = {
       // Extract the tile's pixel data (with overlap padding) from source canvas
       const tileImageData = srcCtx.getImageData(tile.sx, tile.sy, tile.sw, tile.sh);
 
-      let outTileImageData, outW, outH, cropX, cropY, cropW, cropH;
+      let outTileImageData;
 
       if (isLiteModel) {
         // ---- LITE MODEL PATH: pad tile up to fixed 128x128 before inference ----
@@ -94,44 +98,35 @@ const ImageProcessor = {
         const paddedOutH = dims[2];
         const paddedOutImageData = this._tensorToImageData(outputData, paddedOutW, paddedOutH);
 
-        // Crop the output back down to just the real (unpadded) tile area, scaled up
-        const realOutW = tile.sw * scale;
-        const realOutH = tile.sh * scale;
-        outTileImageData = this._cropImageData(paddedOutImageData, 0, 0, realOutW, realOutH);
-
-        outW = realOutW;
-        outH = realOutH;
-        cropX = 0;
-        cropY = 0;
-        cropW = tile.coreW * scale;
-        cropH = tile.coreH * scale;
+        // Crop off the fixed-128 fill-padding (not the overlap padding) —
+        // this brings us back to exactly tile.sw*scale x tile.sh*scale
+        outTileImageData = this._cropImageData(paddedOutImageData, 0, 0, tile.sw * scale, tile.sh * scale);
       } else {
-        // ---- FULL MODEL PATH: dynamic tile size, as before ----
+        // ---- FULL MODEL PATH: dynamic tile size ----
         const tensorData = this._imageDataToTensor(tileImageData);
         const { data: outputData, dims } = await ONNXEngine.runInference(tensorData, tile.sw, tile.sh);
-
-        outH = dims[2];
-        outW = dims[3];
-        outTileImageData = this._tensorToImageData(outputData, outW, outH);
-
-        cropX = tile.padLeft * scale;
-        cropY = tile.padTop * scale;
-        cropW = tile.coreW * scale;
-        cropH = tile.coreH * scale;
+        outTileImageData = this._tensorToImageData(outputData, dims[3], dims[2]);
       }
 
-      // Draw this tile's output onto the correct position of the output canvas,
-      // cropping away the overlap padding so tiles blend seamlessly.
+      // Feather the overlap edges (fades to 0 alpha only where a neighbor
+      // tile exists) so the two tiles blend smoothly instead of showing
+      // a hard seam line when composited.
+      outTileImageData = this._applyFeather(
+        outTileImageData,
+        tile.padLeft * scale,
+        tile.padRight * scale,
+        tile.padTop * scale,
+        tile.padBottom * scale
+      );
+
+      // Draw the FULL (uncropped) feathered tile at its true source
+      // position — normal alpha compositing handles the blend.
       const tileCanvas = document.createElement('canvas');
-      tileCanvas.width = outW;
-      tileCanvas.height = outH;
+      tileCanvas.width = outTileImageData.width;
+      tileCanvas.height = outTileImageData.height;
       tileCanvas.getContext('2d').putImageData(outTileImageData, 0, 0);
 
-      outCtx.drawImage(
-        tileCanvas,
-        cropX, cropY, cropW, cropH,
-        tile.dx * scale, tile.dy * scale, cropW, cropH
-      );
+      outCtx.drawImage(tileCanvas, tile.sx * scale, tile.sy * scale);
 
       processedTiles++;
 
@@ -194,7 +189,7 @@ const ImageProcessor = {
 
         tiles.push({
           sx, sy, sw, sh,
-          padLeft, padTop,
+          padLeft, padTop, padRight, padBottom,
           coreW, coreH,
           dx: x, // destination x in SOURCE-image pixel space (scaled later by caller)
           dy: y
@@ -264,6 +259,46 @@ const ImageProcessor = {
     outCtx.drawImage(canvas, x, y, w, h, 0, 0, w, h);
 
     return outCtx.getImageData(0, 0, w, h);
+  },
+
+  /* ------------------------------------------------------------------
+     APPLY FEATHER (smooth alpha fade) ON TILE EDGES THAT HAVE OVERLAP
+     WITH A NEIGHBOR. This is what actually removes visible tile seams:
+     instead of hard-cropping each tile to its "core" area and pasting
+     with a sharp edge, we keep the full overlap region and fade its
+     alpha from 0 (at the outer edge) to 1 (at the inner/core edge).
+     When two neighboring tiles are drawn one after another with
+     complementary fades in their shared overlap band, normal alpha
+     compositing blends them smoothly instead of showing a hard line.
+     Edges that touch the actual image boundary (pad = 0, no neighbor)
+     are left fully opaque — only shared internal edges get feathered.
+     ------------------------------------------------------------------ */
+  _applyFeather(imageData, padLeft, padRight, padTop, padBottom) {
+    if (padLeft <= 0 && padRight <= 0 && padTop <= 0 && padBottom <= 0) {
+      return imageData; // nothing to feather — no neighbors on any side
+    }
+
+    const { width, height, data } = imageData;
+
+    for (let y = 0; y < height; y++) {
+      let vFade = 1;
+      if (padTop > 0 && y < padTop) vFade = Math.min(vFade, y / padTop);
+      if (padBottom > 0 && y >= height - padBottom) vFade = Math.min(vFade, (height - 1 - y) / padBottom);
+
+      for (let x = 0; x < width; x++) {
+        let hFade = 1;
+        if (padLeft > 0 && x < padLeft) hFade = Math.min(hFade, x / padLeft);
+        if (padRight > 0 && x >= width - padRight) hFade = Math.min(hFade, (width - 1 - x) / padRight);
+
+        const fade = hFade * vFade;
+        if (fade < 1) {
+          const alphaIdx = (y * width + x) * 4 + 3;
+          data[alphaIdx] = Math.round(data[alphaIdx] * fade);
+        }
+      }
+    }
+
+    return imageData;
   },
 
   /* ------------------------------------------------------------------
