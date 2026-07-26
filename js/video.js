@@ -164,6 +164,9 @@ const VideoProcessor = {
 
     this.ffmpeg.on('log', ({ message }) => {
       console.log('[FFmpeg]', message);
+      if (typeof DebugPanel !== 'undefined') {
+        DebugPanel.log('info', `[FFmpeg internal] ${message}`);
+      }
     });
 
     onProgress(30, 'Loading FFmpeg core (local files)...');
@@ -283,15 +286,24 @@ const VideoProcessor = {
     /* ---------------- STEP 4: Re-encode enhanced frames into video ---------------- */
     onProgress(80, 'Merging enhanced frames into video...');
 
-    await ffmpeg.exec([
-      '-framerate', String(extractFps),
-      '-i', 'enhanced_frame_%04d.png',
-      '-c:v', 'libx264',
-      '-pix_fmt', 'yuv420p',
-      '-crf', '18',
-      '-preset', 'veryfast',
-      'video_no_audio.mp4'
-    ]);
+    try {
+      await ffmpeg.exec([
+        '-framerate', String(extractFps),
+        '-i', 'enhanced_frame_%04d.png',
+        '-c:v', 'libx264',
+        '-pix_fmt', 'yuv420p',
+        '-crf', '18',
+        '-preset', 'veryfast',
+        'video_no_audio.mp4'
+      ]);
+    } catch (e) {
+      const reason = (e && e.message) ? e.message : 'FFmpeg ran out of memory encoding the frames.';
+      throw new Error(
+        `Merging enhanced frames into a video failed (${reason}). ` +
+        `This usually means the device ran out of memory — the enhanced frames ` +
+        `are very large at 4x scale. Try again with "Upscale Factor" set to 2x for video.`
+      );
+    }
 
     if (isCancelled()) throw new Error('Processing cancelled by user.');
 
@@ -316,7 +328,17 @@ const VideoProcessor = {
     }
 
     onProgress(97, 'Reading final output...');
-    const outputData = await ffmpeg.readFile(finalName);
+    let outputData;
+    try {
+      outputData = await ffmpeg.readFile(finalName);
+    } catch (e) {
+      const reason = (e && e.message) ? e.message : 'FFmpeg engine stopped responding — most likely it ran out of memory while encoding all the enhanced frames.';
+      throw new Error(
+        `Failed to read the final video (${reason}). ` +
+        `Try again with a lower "Upscale Factor" (2x instead of 4x) for video — ` +
+        `it uses far less memory per frame and is much less likely to crash on mobile.`
+      );
+    }
     const blob = new Blob([outputData.buffer], { type: 'video/mp4' });
 
     /* ---------------- CLEANUP: remove temp files from virtual FS ---------------- */
