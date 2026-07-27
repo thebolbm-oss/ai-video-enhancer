@@ -141,8 +141,46 @@ const ImageProcessor = {
     }
 
     if (settings.faceEnhance) {
-      onProgress(95, 'Enhancing facial details...');
-      this._applySharpen(outCtx, outCanvas.width, outCanvas.height);
+      onProgress(94, 'Enhancing facial details...');
+      try {
+        const sharpened = PostProcess.applyConvolution(outCanvas, 'sharpen', 0.5);
+        outCtx.clearRect(0, 0, outCanvas.width, outCanvas.height);
+        outCtx.drawImage(sharpened, 0, 0);
+      } catch (e) {
+        // GPU filter unavailable on this device — fall back to the slower JS version
+        this._applySharpen(outCtx, outCanvas.width, outCanvas.height);
+      }
+    }
+
+    if (settings.sharpen) {
+      onProgress(95, 'Sharpening (GPU)...');
+      try {
+        const sharpened = PostProcess.applyConvolution(outCanvas, 'sharpen', 0.6);
+        outCtx.clearRect(0, 0, outCanvas.width, outCanvas.height);
+        outCtx.drawImage(sharpened, 0, 0);
+      } catch (e) {
+        this._applySharpen(outCtx, outCanvas.width, outCanvas.height);
+      }
+    }
+
+    if (settings.edgeEnhance) {
+      onProgress(96, 'Enhancing edges (GPU)...');
+      try {
+        const edged = PostProcess.applyConvolution(outCanvas, 'edge', 0.45);
+        outCtx.clearRect(0, 0, outCanvas.width, outCanvas.height);
+        outCtx.drawImage(edged, 0, 0);
+      } catch (e) {
+        DebugPanel.log('warn', `Edge enhancement skipped: ${e.message}`);
+      }
+    }
+
+    if (settings.textureEnhance) {
+      onProgress(97, 'Boosting texture/clarity...');
+      try {
+        PostProcess.applyTextureBoost(outCtx, outCanvas.width, outCanvas.height, 0.35);
+      } catch (e) {
+        DebugPanel.log('warn', `Texture boost skipped: ${e.message}`);
+      }
     }
 
     onProgress(98, 'Encoding final image...');
