@@ -134,6 +134,9 @@ const App = {
     backend: 'webgpu',
     faceEnhance: false,
     denoise: true,
+    sharpen: false,
+    edgeEnhance: false,
+    textureEnhance: false,
     batchMode: false
   },
 
@@ -181,6 +184,7 @@ function cacheElements() {
     'imageModeBtn', 'videoModeBtn',
     'scaleSelect', 'tileSelect', 'backendSelect',
     'faceEnhanceToggle', 'denoiseToggle', 'batchToggle',
+    'sharpenToggle', 'edgeEnhanceToggle', 'textureEnhanceToggle',
     'enhanceBtn', 'resetBtn',
     'batchList', 'batchItems',
     'progressSection', 'progressTitle', 'progressStage',
@@ -219,6 +223,11 @@ function setYear() {
    SYSTEM CAPABILITY DETECTION
    ========================================================================== */
 async function detectSystemCapabilities() {
+  DebugPanel.log(
+    window.crossOriginIsolated ? 'success' : 'warn',
+    `Cross-origin isolation: ${window.crossOriginIsolated ? 'ACTIVE (multi-threaded WASM available, up to ' + (navigator.hardwareConcurrency || 4) + ' cores)' : 'not active yet (single-threaded WASM — may enable after a reload)'}`
+  );
+
   DebugPanel.log('info', 'Detecting GPU / WebGPU capability...');
   try {
     const gpuInfo = await ONNXEngine.detectGPU();
@@ -273,24 +282,7 @@ async function initModelSetup() {
         Utils.showNotification('warning', 'Processing Active', 'Please wait for current process to finish.');
         return;
       }
-      App.els.modelSetupProgress.classList.remove('hidden');
-      App.els.modelStatus.textContent = 'Loading...';
-      updateModelStatus('info', 'Lite model load ho raha hai...');
-      DebugPanel.log('info', 'Loading lite model (bundled in repo, no download needed).');
-
-      try {
-        await ONNXEngine.init(App.settings.backend);
-        await ONNXEngine.loadLiteModel((pct, stage) => updateModelProgress(pct, stage));
-        onModelReady();
-        Utils.showNotification('success', 'Lite Model Ready', 'Turant use karo — light aur fast hai, quality thodi kam ho sakti hai.');
-        DebugPanel.log('success', 'Lite model loaded successfully.');
-      } catch (err) {
-        DebugPanel.log('error', `Lite model load failed: ${err.message}`);
-        updateModelStatus('error', `Load fail hua: ${err.message}`);
-        App.els.modelStatus.textContent = 'Failed to Load';
-        App.els.modelSetupProgress.classList.add('hidden');
-        Utils.showNotification('error', 'Lite Model Failed', err.message);
-      }
+      await runLiteModelLoad({ showToast: true });
     });
   }
 
@@ -342,7 +334,48 @@ async function initModelSetup() {
       App.els.modelStatus.textContent = 'Failed to Load';
     }
   } else {
-    updateModelStatus('info', 'Model download karke neeche upload karo shuru karne ke liye.');
+    updateModelStatus('info', 'Model download karke neeche upload karo shuru karne ke liye — ya niche "Use Lite Model" turant try karo.');
+
+    // AUTO-PRELOAD: no full model saved from before, so automatically start
+    // loading the bundled lite model in the background as soon as the page
+    // opens — the person doesn't have to click anything to get a working
+    // model ready. If they later upload the full model, it simply replaces
+    // this one.
+    DebugPanel.log('info', 'No full model cached — auto-preloading lite model in the background...');
+    runLiteModelLoad({ showToast: false });
+  }
+}
+
+/* ------------------------------------------------------------------
+   SHARED LITE MODEL LOADER — used by both the "Use Lite Model" button
+   and the automatic background preload on page open.
+   ------------------------------------------------------------------ */
+async function runLiteModelLoad({ showToast = true } = {}) {
+  if (ONNXEngine.isLoaded && ONNXEngine.activeModelType === 'lite') {
+    return; // already loaded, nothing to do
+  }
+
+  App.els.modelSetupProgress.classList.remove('hidden');
+  App.els.modelStatus.textContent = 'Loading...';
+  updateModelStatus('info', 'Lite model load ho raha hai (background me)...');
+  DebugPanel.log('info', 'Loading lite model (bundled in repo, no download needed).');
+
+  try {
+    await ONNXEngine.init(App.settings.backend);
+    await ONNXEngine.loadLiteModel((pct, stage) => updateModelProgress(pct, stage));
+    onModelReady();
+    if (showToast) {
+      Utils.showNotification('success', 'Lite Model Ready', 'Turant use karo — light aur fast hai, quality thodi kam ho sakti hai.');
+    }
+    DebugPanel.log('success', 'Lite model loaded successfully.');
+  } catch (err) {
+    DebugPanel.log('error', `Lite model load failed: ${err.message}`);
+    updateModelStatus('error', `Load fail hua: ${err.message}`);
+    App.els.modelStatus.textContent = 'Failed to Load';
+    App.els.modelSetupProgress.classList.add('hidden');
+    if (showToast) {
+      Utils.showNotification('error', 'Lite Model Failed', err.message);
+    }
   }
 }
 
@@ -680,6 +713,21 @@ function initSettingsPanel() {
 
   App.els.denoiseToggle.addEventListener('change', (e) => {
     App.settings.denoise = e.target.checked;
+  });
+
+  App.els.sharpenToggle.addEventListener('change', (e) => {
+    App.settings.sharpen = e.target.checked;
+    DebugPanel.log('info', `Sharpen (GPU) ${e.target.checked ? 'enabled' : 'disabled'}.`);
+  });
+
+  App.els.edgeEnhanceToggle.addEventListener('change', (e) => {
+    App.settings.edgeEnhance = e.target.checked;
+    DebugPanel.log('info', `Edge Enhancement (GPU) ${e.target.checked ? 'enabled' : 'disabled'}.`);
+  });
+
+  App.els.textureEnhanceToggle.addEventListener('change', (e) => {
+    App.settings.textureEnhance = e.target.checked;
+    DebugPanel.log('info', `Texture/Clarity Boost ${e.target.checked ? 'enabled' : 'disabled'}.`);
   });
 
   App.els.batchToggle.addEventListener('change', (e) => {
