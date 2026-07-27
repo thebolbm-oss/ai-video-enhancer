@@ -355,6 +355,12 @@ async function runLiteModelLoad({ showToast = true } = {}) {
     return; // already loaded, nothing to do
   }
 
+  if (ONNXEngine.isLoading) {
+    return; // a load is already in progress (e.g. auto-preload) — don't start another
+  }
+
+  if (App.els.useLiteModelBtn) App.els.useLiteModelBtn.disabled = true;
+
   App.els.modelSetupProgress.classList.remove('hidden');
   App.els.modelStatus.textContent = 'Loading...';
   updateModelStatus('info', 'Lite model load ho raha hai (background me)...');
@@ -376,6 +382,8 @@ async function runLiteModelLoad({ showToast = true } = {}) {
     if (showToast) {
       Utils.showNotification('error', 'Lite Model Failed', err.message);
     }
+  } finally {
+    if (App.els.useLiteModelBtn) App.els.useLiteModelBtn.disabled = false;
   }
 }
 
