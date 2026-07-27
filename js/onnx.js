@@ -28,6 +28,7 @@ const ONNXEngine = {
 
   session: null,          // Active ort.InferenceSession
   isLoaded: false,        // Whether the model has been loaded into a session
+  isLoading: false,       // Guard flag — prevents overlapping load attempts (e.g. auto-preload + button tap at the same time)
   activeBackend: 'wasm',  // 'webgpu' | 'wasm' — whichever actually initialized
   activeModelType: null,  // 'full' | 'lite' — which model is currently active
 
@@ -263,6 +264,19 @@ const ONNXEngine = {
       return this.session;
     }
 
+    if (this.isLoading) {
+      throw new Error('A model is already being loaded — please wait for it to finish before trying again.');
+    }
+    this.isLoading = true;
+
+    try {
+      return await this._doLoadLiteModel(onProgress);
+    } finally {
+      this.isLoading = false;
+    }
+  },
+
+  async _doLoadLiteModel(onProgress) {
     onProgress(15, 'Loading lightweight model from repo...');
 
     // The lite model is tiny (~5MB) — WASM alone is already fast enough
@@ -288,7 +302,7 @@ const ONNXEngine = {
               }
             ]
           },
-          15000 // 15s timeout — if this backend hangs, move on instead of getting stuck forever
+          45000 // 45s timeout — WASM binaries download from CDN, slower networks need more room before we give up
         );
         this.activeBackend = backend;
         break;
