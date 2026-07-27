@@ -219,6 +219,19 @@ const VideoProcessor = {
     let hasAudio = true;
     try {
       await ffmpeg.exec(['-i', inputName, '-vn', '-acodec', 'copy', 'audio.aac']);
+
+      // IMPORTANT: ffmpeg.exec() can resolve successfully even when the
+      // internal command actually failed (e.g. the video has no audio
+      // stream at all) — it doesn't always throw a JS error in that case.
+      // So we verify the file genuinely exists in the virtual filesystem
+      // rather than trusting that exec() didn't throw.
+      const entries = await ffmpeg.listDir('/');
+      const audioEntry = entries.find(e => e.name === 'audio.aac' && !e.isDir);
+      hasAudio = !!audioEntry;
+
+      if (!hasAudio) {
+        DebugPanel.log('info', 'No audio track detected in this video (extraction produced no file) — continuing without audio.');
+      }
     } catch (e) {
       hasAudio = false; // Some videos have no audio track — that's fine
     }
