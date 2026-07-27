@@ -6,6 +6,12 @@
 <title>AI Video Enhancer | Real-ESRGAN Powered Upscaler</title>
 <meta name="description" content="Professional AI Image & Video Upscaler powered by Real-ESRGAN, ONNX Runtime Web and FFmpeg.wasm" />
 
+<!-- Cross-Origin Isolation Service Worker — must load first, before any
+     other script, so SharedArrayBuffer (needed for multi-threaded WASM)
+     is available as early as possible. Registering this may cause one
+     automatic page reload the first time a visitor opens the site. -->
+<script src="vendor/coi-serviceworker.js"></script>
+
 <!-- Favicon -->
 <link rel="icon" type="image/png" href="assets/favicon.png" />
 
@@ -379,6 +385,30 @@
           </div>
 
           <div class="setting-item switch-item">
+            <label for="sharpenToggle">Sharpen (GPU)</label>
+            <label class="switch">
+              <input type="checkbox" id="sharpenToggle" />
+              <span class="switch-slider"></span>
+            </label>
+          </div>
+
+          <div class="setting-item switch-item">
+            <label for="edgeEnhanceToggle">Edge Enhancement (GPU)</label>
+            <label class="switch">
+              <input type="checkbox" id="edgeEnhanceToggle" />
+              <span class="switch-slider"></span>
+            </label>
+          </div>
+
+          <div class="setting-item switch-item">
+            <label for="textureEnhanceToggle">Texture / Clarity Boost</label>
+            <label class="switch">
+              <input type="checkbox" id="textureEnhanceToggle" />
+              <span class="switch-slider"></span>
+            </label>
+          </div>
+
+          <div class="setting-item switch-item">
             <label for="batchToggle">Batch Processing Mode</label>
             <label class="switch">
               <input type="checkbox" id="batchToggle" />
@@ -623,6 +653,7 @@
 <script src="js/utils.js"></script>
 <script src="js/onnx.js"></script>
 <script src="js/image.js"></script>
+<script src="js/postprocess.js"></script>
 <script src="js/video.js"></script>
 <script src="js/ui.js"></script>
 <script src="script.js"></script>
