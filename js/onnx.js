@@ -55,6 +55,22 @@ const ONNXEngine = {
   LITE_MODEL_FIXED_TILE: 128, // this model only accepts fixed 128x128 input tiles
 
   /* ------------------------------------------------------------------
+     CREATE AN ONNX SESSION WITH A HARD TIMEOUT
+     Some mobile browsers can hang indefinitely during WebGPU/WASM
+     backend initialization instead of failing cleanly. This races the
+     session creation against a timer so a stuck attempt always gets
+     abandoned instead of freezing the app forever.
+     ------------------------------------------------------------------ */
+  _createSessionWithTimeout(path, options, timeoutMs) {
+    return Promise.race([
+      ort.InferenceSession.create(path, options),
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error(`Timed out after ${timeoutMs / 1000}s waiting for backend to initialize.`)), timeoutMs)
+      )
+    ]);
+  },
+
+  /* ------------------------------------------------------------------
      DETECT GPU / WEBGPU AVAILABILITY
      Returns { available: boolean, name: string }
      ------------------------------------------------------------------ */
@@ -101,9 +117,12 @@ const ONNXEngine = {
     // Point ORT to the CDN-hosted wasm binaries matching the script version
     ort.env.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.19.2/dist/';
 
-    // Use multiple threads if the browser supports SharedArrayBuffer
+    // Use multiple threads if the browser supports SharedArrayBuffer.
+    // This requires cross-origin isolation (COOP/COEP headers), which the
+    // coi-serviceworker.js loaded in index.html enables even on static
+    // hosts like GitHub Pages that can't set custom server headers.
     ort.env.wasm.numThreads = (typeof SharedArrayBuffer !== 'undefined')
-      ? Math.min(navigator.hardwareConcurrency || 4, 4)
+      ? Math.min(navigator.hardwareConcurrency || 4, 8)
       : 1;
 
     ort.env.wasm.simd = true;
@@ -230,6 +249,13 @@ const ONNXEngine = {
      This model uses ONNX "external data" format, meaning the .onnx
      file only holds the graph and points to the separate .data file
      for the actual weights — both must be fetched together.
+
+     WebGPU init can hang indefinitely on some mobile browsers instead
+     of failing cleanly, which used to get the app stuck forever on
+     "Initializing WebGPU for lite model...". Each backend attempt is
+     now wrapped in a timeout so a stuck attempt gets abandoned and the
+     next backend (WASM) is tried instead, guaranteeing this always
+     finishes one way or another.
      ------------------------------------------------------------------ */
   async loadLiteModel(onProgress = () => {}) {
     if (this.isLoaded && this.session && this.activeModelType === 'lite') {
@@ -239,23 +265,31 @@ const ONNXEngine = {
 
     onProgress(15, 'Loading lightweight model from repo...');
 
-    const backendsToTry = this.activeBackend === 'webgpu' ? ['webgpu', 'wasm'] : ['wasm'];
+    // The lite model is tiny (~5MB) — WASM alone is already fast enough
+    // for it, and skipping WebGPU here avoids the flaky-hang issue some
+    // phones hit on WebGPU init. WebGPU is still used for the full model
+    // where the speed gain actually matters.
+    const backendsToTry = ['wasm'];
     let session = null;
     let lastError = null;
 
     for (const backend of backendsToTry) {
       try {
         onProgress(50, `Initializing ${backend.toUpperCase()} for lite model...`);
-        session = await ort.InferenceSession.create(this.LITE_MODEL_PATH, {
-          executionProviders: [backend],
-          graphOptimizationLevel: 'all',
-          externalData: [
-            {
-              path: this.LITE_MODEL_DATA_NAME,
-              data: this.LITE_MODEL_DATA_PATH
-            }
-          ]
-        });
+        session = await this._createSessionWithTimeout(
+          this.LITE_MODEL_PATH,
+          {
+            executionProviders: [backend],
+            graphOptimizationLevel: 'all',
+            externalData: [
+              {
+                path: this.LITE_MODEL_DATA_NAME,
+                data: this.LITE_MODEL_DATA_PATH
+              }
+            ]
+          },
+          15000 // 15s timeout — if this backend hangs, move on instead of getting stuck forever
+        );
         this.activeBackend = backend;
         break;
       } catch (err) {
