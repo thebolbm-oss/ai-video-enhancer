@@ -344,43 +344,27 @@ const ImageProcessor = {
   },
 
   /* ------------------------------------------------------------------
-     SIMPLE DENOISE PASS — light box-blur smoothing to reduce AI artifacts
-     Operates directly on the canvas context in place.
+     DENOISE PASS — light blur+blend to reduce AI artifacts
+     Uses the browser's native, hardware-accelerated canvas blur filter
+     instead of a manual per-pixel JS loop. A manual 3x3 loop over a
+     large 4x-upscaled image (e.g. a video frame at 2880x5120 = ~15M
+     pixels x 9 samples each) is extremely slow in interpreted JS —
+     this is one of the biggest reasons video enhancement was slow.
+     The native filter achieves the same "70% original + 30% blurred"
+     smoothing look, just computed natively instead of pixel-by-pixel.
      ------------------------------------------------------------------ */
   _applyDenoise(ctx, width, height) {
-    const imageData = ctx.getImageData(0, 0, width, height);
-    const src = imageData.data;
-    const out = new Uint8ClampedArray(src.length);
-    const radius = 1; // 3x3 kernel — light touch so detail isn't destroyed
+    // Snapshot the current (sharp) output before blending a blurred copy over it
+    const original = document.createElement('canvas');
+    original.width = width;
+    original.height = height;
+    original.getContext('2d').drawImage(ctx.canvas, 0, 0);
 
-    for (let y = 0; y < height; y++) {
-      for (let x = 0; x < width; x++) {
-        let rSum = 0, gSum = 0, bSum = 0, count = 0;
-
-        for (let ky = -radius; ky <= radius; ky++) {
-          for (let kx = -radius; kx <= radius; kx++) {
-            const nx = x + kx;
-            const ny = y + ky;
-            if (nx < 0 || nx >= width || ny < 0 || ny >= height) continue;
-            const idx = (ny * width + nx) * 4;
-            rSum += src[idx];
-            gSum += src[idx + 1];
-            bSum += src[idx + 2];
-            count++;
-          }
-        }
-
-        const outIdx = (y * width + x) * 4;
-        // Blend 70% original + 30% blurred to keep sharpness while reducing noise
-        out[outIdx] = src[outIdx] * 0.7 + (rSum / count) * 0.3;
-        out[outIdx + 1] = src[outIdx + 1] * 0.7 + (gSum / count) * 0.3;
-        out[outIdx + 2] = src[outIdx + 2] * 0.7 + (bSum / count) * 0.3;
-        out[outIdx + 3] = src[outIdx + 3];
-      }
-    }
-
-    imageData.data.set(out);
-    ctx.putImageData(imageData, 0, 0);
+    ctx.save();
+    ctx.filter = 'blur(0.6px)';   // light touch, matches the old radius-1 softness
+    ctx.globalAlpha = 0.3;         // same 70/30 blend ratio as before
+    ctx.drawImage(original, 0, 0);
+    ctx.restore();
   },
 
   /* ------------------------------------------------------------------
