@@ -106,22 +106,31 @@ const ONNXEngine = {
     }
   },
 
+  // Multiple CDN mirrors for the ONNX Runtime Web WASM binaries. If one is
+  // blocked or unreachable on a given network, we automatically fall back
+  // to the next one instead of hanging forever on a single source.
+  ORT_CDN_CANDIDATES: [
+    'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.19.2/dist/',
+    'https://unpkg.com/onnxruntime-web@1.19.2/dist/'
+  ],
+
   /* ------------------------------------------------------------------
      INITIALIZE ONNX RUNTIME ENVIRONMENT
      Configures WASM paths and threading before any session is created.
+     cdnIndex selects which mirror from ORT_CDN_CANDIDATES to use.
      ------------------------------------------------------------------ */
-  async init(preferredBackend = 'webgpu') {
+  async init(preferredBackend = 'webgpu', cdnIndex = 0) {
     if (typeof ort === 'undefined') {
       throw new Error('ONNX Runtime Web failed to load. Check your internet connection.');
     }
 
     // Point ORT to the CDN-hosted wasm binaries matching the script version
-    ort.env.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.19.2/dist/';
+    ort.env.wasm.wasmPaths = this.ORT_CDN_CANDIDATES[cdnIndex] || this.ORT_CDN_CANDIDATES[0];
 
     // Use multiple threads if the browser supports SharedArrayBuffer.
-    // This requires cross-origin isolation (COOP/COEP headers), which the
-    // coi-serviceworker.js loaded in index.html enables even on static
-    // hosts like GitHub Pages that can't set custom server headers.
+    // This requires cross-origin isolation (COOP/COEP headers), which most
+    // static hosts (including GitHub Pages) don't provide by default —
+    // so this will normally fall back to a single thread, which is fine.
     ort.env.wasm.numThreads = (typeof SharedArrayBuffer !== 'undefined')
       ? Math.min(navigator.hardwareConcurrency || 4, 8)
       : 1;
@@ -283,13 +292,20 @@ const ONNXEngine = {
     // for it, and skipping WebGPU here avoids the flaky-hang issue some
     // phones hit on WebGPU init. WebGPU is still used for the full model
     // where the speed gain actually matters.
-    const backendsToTry = ['wasm'];
+    const backend = 'wasm';
     let session = null;
     let lastError = null;
 
-    for (const backend of backendsToTry) {
+    // Try each CDN mirror for the WASM runtime files in turn — if one is
+    // blocked/unreachable on this network (common cause of a stuck load),
+    // move on to the next instead of failing outright.
+    for (let cdnIndex = 0; cdnIndex < this.ORT_CDN_CANDIDATES.length; cdnIndex++) {
+      const cdnUrl = this.ORT_CDN_CANDIDATES[cdnIndex];
       try {
-        onProgress(50, `Initializing ${backend.toUpperCase()} for lite model...`);
+        await this.init(this.activeBackend, cdnIndex);
+        onProgress(50, `Initializing ${backend.toUpperCase()} for lite model (source ${cdnIndex + 1}/${this.ORT_CDN_CANDIDATES.length})...`);
+        DebugPanel.log('info', `Trying ONNX runtime CDN: ${cdnUrl}`);
+
         session = await this._createSessionWithTimeout(
           this.LITE_MODEL_PATH,
           {
@@ -302,12 +318,14 @@ const ONNXEngine = {
               }
             ]
           },
-          45000 // 45s timeout — WASM binaries download from CDN, slower networks need more room before we give up
+          25000 // 25s per CDN attempt — with 2 CDNs, worst case ~50s total before giving up entirely
         );
         this.activeBackend = backend;
+        DebugPanel.log('success', `ONNX runtime loaded successfully from: ${cdnUrl}`);
         break;
       } catch (err) {
-        console.warn(`Lite model backend "${backend}" failed:`, err);
+        console.warn(`Lite model load via CDN "${cdnUrl}" failed:`, err);
+        DebugPanel.log('warn', `CDN "${cdnUrl}" failed or timed out — ${cdnIndex < this.ORT_CDN_CANDIDATES.length - 1 ? 'trying next mirror...' : 'no more mirrors to try.'}`);
         lastError = err;
       }
     }
