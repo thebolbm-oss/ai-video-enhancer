@@ -6,6 +6,18 @@
 <title>AI Video Enhancer | Real-ESRGAN Powered Upscaler</title>
 <meta name="description" content="Professional AI Image & Video Upscaler powered by Real-ESRGAN, ONNX Runtime Web and FFmpeg.wasm" />
 
+<!-- Force-cleanup: automatically unregister any leftover service worker
+     from a previous version of this site (e.g. an old experimental
+     cross-origin-isolation worker) so it can never interfere again,
+     without requiring the visitor to manually clear browser data. -->
+<script>
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.getRegistrations().then((regs) => {
+      regs.forEach((reg) => reg.unregister());
+    }).catch(() => {});
+  }
+</script>
+
 <!-- Favicon -->
 <link rel="icon" type="image/png" href="assets/favicon.png" />
 
@@ -194,43 +206,18 @@
   <!-- ===================== MODEL SETUP SECTION ===================== -->
   <section class="model-setup-section" id="modelSetup">
     <div class="section-container">
-      <h2 class="section-title"><i class="fa-solid fa-download"></i> Setup AI Model (One-Time)</h2>
-      <p class="section-subtitle">Model download karo aur neeche upload karo — sirf ek baar, phir hamesha offline chalega</p>
+      <h2 class="section-title"><i class="fa-solid fa-download"></i> AI Model</h2>
+      <p class="section-subtitle">Website khulte hi automatically load ho jata hai — kuch download/upload nahi karna</p>
 
       <div class="model-setup-card glass" id="modelSetupCard">
 
         <div class="model-quick-option glass">
           <div class="model-step-info">
             <h4>⚡ Lite Model (Instant, No Download)</h4>
-            <p>Chhota model (~5 MB), website khulte hi ready hai — kam heavy, quality thodi kam</p>
+            <p>Chhota model (~5 MB), website khulte hi background me automatically ready ho jata hai</p>
           </div>
           <button class="btn btn-primary" id="useLiteModelBtn">
             <i class="fa-solid fa-bolt"></i> Use Lite Model
-          </button>
-        </div>
-
-        <div class="model-divider"><span>YA — Behtar Quality Ke Liye Full Model</span></div>
-
-        <div class="model-step">
-          <span class="model-step-num">1</span>
-          <div class="model-step-info">
-            <h4>Model File Download Karo</h4>
-            <p>Real-ESRGAN x4 ONNX model file apne device par save karo</p>
-          </div>
-          <a href="#" class="btn btn-primary" id="modelDownloadLink" download target="_blank" rel="noopener">
-            <i class="fa-solid fa-download"></i> Download
-          </a>
-        </div>
-
-        <div class="model-step">
-          <span class="model-step-num">2</span>
-          <div class="model-step-info">
-            <h4>Yahan Upload Karo</h4>
-            <p id="modelUploadHint">Downloaded .onnx file select karo AI engine activate karne ke liye</p>
-          </div>
-          <input type="file" id="modelFileInput" accept=".onnx" hidden />
-          <button class="btn btn-glass" id="modelUploadBtn">
-            <i class="fa-solid fa-upload"></i> Upload Model
           </button>
         </div>
 
@@ -242,12 +229,27 @@
         </div>
 
         <div class="model-setup-status" id="modelSetupStatus">
-          <i class="fa-solid fa-circle-info"></i> Model download karke neeche upload karo shuru karne ke liye.
+          <i class="fa-solid fa-circle-info"></i> Model load ho raha hai...
         </div>
+      </div>
+    </div>
+  </section>
 
-        <button class="btn btn-glass model-clear-btn" id="modelClearBtn">
-          <i class="fa-solid fa-trash"></i> Saved Model Clear Karo
+  <!-- ===================== FAST MODE SECTION ===================== -->
+  <section class="fast-mode-section" id="fastModeSection">
+    <div class="section-container">
+      <div class="fast-mode-card glass">
+        <div class="fast-mode-icon"><i class="fa-solid fa-bolt-lightning"></i></div>
+        <h2 class="fast-mode-title">⚡ FAST MODE</h2>
+        <p class="fast-mode-subtitle">
+          Image ko pehle analyze karta hai (blur, noise, sharpness, contrast) — phir khud decide karta hai
+          kitna scale (1x-4x), kitna denoise, kitna sharpen chahiye. Result khud check karta hai, agar
+          kharab laga to gentler settings se dobara try karta hai.
+        </p>
+        <button class="btn btn-primary btn-lg fast-mode-btn" id="fastModeBtn" disabled>
+          <i class="fa-solid fa-wand-magic-sparkles"></i> Fast Mode Se Enhance Karo
         </button>
+        <p class="fast-mode-note">Filhaal sirf images ke liye — video jald aayega.</p>
       </div>
     </div>
   </section>
@@ -648,6 +650,8 @@
 <script src="js/onnx.js"></script>
 <script src="js/image.js"></script>
 <script src="js/postprocess.js"></script>
+<script src="js/analyze.js"></script>
+<script src="js/planner.js"></script>
 <script src="js/video.js"></script>
 <script src="js/ui.js"></script>
 <script src="script.js"></script>
