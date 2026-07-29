@@ -196,10 +196,11 @@ function cacheElements() {
     'originalSizeText', 'enhancedSizeText', 'resolutionText', 'timeTakenText',
     'gpuStatus', 'backendStatus', 'memoryStatus', 'modelStatus',
     'loadingOverlay', 'loadingText', 'currentYear',
-    // Model setup section (download link + upload box)
-    'modelDownloadLink', 'modelFileInput', 'modelUploadBtn',
+    // Model setup section (lite model only now)
     'modelSetupProgress', 'modelProgressBarInner', 'modelProgressText',
-    'modelSetupStatus', 'modelClearBtn', 'useLiteModelBtn',
+    'modelSetupStatus', 'useLiteModelBtn',
+    // Fast Mode
+    'fastModeBtn',
     // Video engine setup (ffmpeg-core.wasm download + upload + cache)
     'wasmDownloadLink', 'wasmFileInput', 'wasmUploadBtn',
     'wasmSetupProgress', 'wasmProgressBarInner', 'wasmProgressText',
@@ -263,87 +264,26 @@ function updateMemoryUsage() {
 }
 
 /* ==========================================================================
-   AI MODEL SETUP (Download link + Local Upload + Cache Storage)
+   AI MODEL SETUP — Lite model only (auto-preloaded on page load)
    ========================================================================== */
 async function initModelSetup() {
-  if (!App.els.modelUploadBtn || !App.els.modelFileInput) {
+  if (!App.els.useLiteModelBtn) {
     DebugPanel.log('warn', 'Model setup elements missing — skipping model setup init.');
     return;
   }
 
-  if (App.els.modelDownloadLink) {
-    App.els.modelDownloadLink.href = ONNXEngine.MODEL_DOWNLOAD_URL;
-  }
-
-  // "Use Lite Model" — instant, bundled in the repo, no download/upload needed
-  if (App.els.useLiteModelBtn) {
-    App.els.useLiteModelBtn.addEventListener('click', async () => {
-      if (App.state.isProcessing) {
-        Utils.showNotification('warning', 'Processing Active', 'Please wait for current process to finish.');
-        return;
-      }
-      await runLiteModelLoad({ showToast: true });
-    });
-  }
-
-  App.els.modelUploadBtn.addEventListener('click', () => App.els.modelFileInput.click());
-
-  App.els.modelFileInput.addEventListener('change', async (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-
-    if (!file.name.toLowerCase().endsWith('.onnx')) {
-      Utils.showNotification('error', 'Galat File', 'Sirf .onnx model file select karo.');
-      DebugPanel.log('warn', `Rejected non-.onnx file: ${file.name}`);
+  App.els.useLiteModelBtn.addEventListener('click', async () => {
+    if (App.state.isProcessing) {
+      Utils.showNotification('warning', 'Processing Active', 'Please wait for current process to finish.');
       return;
     }
-
-    await loadModelFromUpload(file);
+    await runLiteModelLoad({ showToast: true });
   });
 
-  if (App.els.modelClearBtn) {
-    App.els.modelClearBtn.addEventListener('click', async () => {
-      await ONNXEngine.clearCachedModel();
-      App.els.modelFileInput.value = '';
-      App.els.modelStatus.textContent = 'Idle (Not Loaded)';
-      App.els.enhanceBtn.disabled = true;
-      updateModelStatus('info', 'Saved model clear kar diya gaya. Dobara upload karo.');
-      Utils.showNotification('info', 'Model Cleared', 'Cached model hata diya gaya hai.');
-      DebugPanel.log('info', 'Cached model cleared by user.');
-    });
-  }
-
-  // On startup, check if a model was already uploaded + cached on a previous visit
-  DebugPanel.log('info', 'Checking for a previously cached model...');
-  const hasCached = await ONNXEngine.checkCachedModel();
-
-  if (hasCached) {
-    updateModelStatus('info', 'Saved model mila — load ho raha hai...');
-    App.els.modelSetupProgress.classList.remove('hidden');
-    App.els.modelStatus.textContent = 'Loading...';
-
-    try {
-      await ONNXEngine.init(App.settings.backend);
-      await ONNXEngine.loadModelFromCache((pct, stage) => updateModelProgress(pct, stage));
-      onModelReady();
-      DebugPanel.log('success', 'Cached model auto-loaded successfully.');
-    } catch (err) {
-      DebugPanel.log('warn', `Cached model load failed: ${err.message}`);
-      updateModelStatus('warn', 'Saved model load nahi ho paaya. Dobara upload karo.');
-      App.els.modelSetupProgress.classList.add('hidden');
-      App.els.modelStatus.textContent = 'Failed to Load';
-    }
-  } else {
-    updateModelStatus('info', 'Model download karke neeche upload karo shuru karne ke liye — ya niche "Use Lite Model" turant try karo.');
-
-    // AUTO-PRELOAD: no full model saved from before, so automatically start
-    // loading the bundled lite model in the background as soon as the page
-    // opens — the person doesn't have to click anything to get a working
-    // model ready. If they later upload the full model, it simply replaces
-    // this one.
-    DebugPanel.log('info', 'No full model cached — auto-preloading lite model in the background...');
-    runLiteModelLoad({ showToast: false });
-  }
+  // AUTO-PRELOAD: start loading the bundled lite model in the background
+  // as soon as the page opens — the person doesn't have to click anything.
+  DebugPanel.log('info', 'Auto-preloading lite model in the background...');
+  runLiteModelLoad({ showToast: false });
 }
 
 /* ------------------------------------------------------------------
@@ -371,7 +311,7 @@ async function runLiteModelLoad({ showToast = true } = {}) {
     await ONNXEngine.loadLiteModel((pct, stage) => updateModelProgress(pct, stage));
     onModelReady();
     if (showToast) {
-      Utils.showNotification('success', 'Lite Model Ready', 'Turant use karo — light aur fast hai, quality thodi kam ho sakti hai.');
+      Utils.showNotification('success', 'Lite Model Ready', 'Turant use karo!');
     }
     DebugPanel.log('success', 'Lite model loaded successfully.');
   } catch (err) {
@@ -387,27 +327,6 @@ async function runLiteModelLoad({ showToast = true } = {}) {
   }
 }
 
-async function loadModelFromUpload(file) {
-  App.els.modelSetupProgress.classList.remove('hidden');
-  App.els.modelStatus.textContent = 'Loading...';
-  updateModelStatus('info', `"${file.name}" load ho raha hai...`);
-  DebugPanel.log('info', `Loading model from uploaded file: ${file.name} (${Utils.formatBytes(file.size)})`);
-
-  try {
-    await ONNXEngine.init(App.settings.backend);
-    await ONNXEngine.loadModelFromFile(file, (pct, stage) => updateModelProgress(pct, stage));
-    onModelReady();
-    Utils.showNotification('success', 'Model Ready', 'Model load ho gaya aur agli baar ke liye save bhi ho gaya.');
-    DebugPanel.log('success', 'Model loaded from upload and cached successfully.');
-  } catch (err) {
-    DebugPanel.log('error', `Model upload/load failed: ${err.message}`);
-    updateModelStatus('error', `Load fail hua: ${err.message}`);
-    App.els.modelStatus.textContent = 'Failed to Load';
-    App.els.modelSetupProgress.classList.add('hidden');
-    Utils.showNotification('error', 'Model Load Failed', err.message);
-  }
-}
-
 function updateModelProgress(pct, stage) {
   if (App.els.modelProgressBarInner) {
     App.els.modelProgressBarInner.style.width = `${pct}%`;
@@ -419,11 +338,25 @@ function updateModelProgress(pct, stage) {
 
 function onModelReady() {
   App.els.modelSetupProgress.classList.add('hidden');
-  const modelLabel = ONNXEngine.activeModelType === 'lite' ? 'Lite Model' : 'Full Model (Real-ESRGAN)';
-  updateModelStatus('success', `${modelLabel} ready hai — ab "Enhance Now" use kar sakte ho.`);
-  App.els.modelStatus.textContent = `Loaded & Ready (${modelLabel})`;
+  updateModelStatus('success', 'Lite Model ready hai — ab "Enhance Now" ya "Fast Mode" use kar sakte ho.');
+  App.els.modelStatus.textContent = 'Loaded & Ready (Lite Model)';
   App.els.backendStatus.textContent = ONNXEngine.activeBackend === 'webgpu' ? 'WebGPU Active' : 'WASM Active';
   App.els.enhanceBtn.disabled = !App.state.currentFile && App.state.batchQueue.length === 0;
+  updateFastModeButtonState();
+}
+
+/* ------------------------------------------------------------------
+   FAST MODE button is only enabled when: model is loaded, a single
+   image file is selected (not batch, not video — Fast Mode is
+   images-only for now), and nothing else is currently processing.
+   ------------------------------------------------------------------ */
+function updateFastModeButtonState() {
+  if (!App.els.fastModeBtn) return;
+  const ready = ONNXEngine.isLoaded
+    && App.state.mode === 'image'
+    && !!App.state.currentFile
+    && !App.state.isProcessing;
+  App.els.fastModeBtn.disabled = !ready;
 }
 
 function updateModelStatus(type, text) {
@@ -651,11 +584,12 @@ function setCurrentFile(file) {
 
   UI.renderFilePreview(file, App.state.originalURL, removeCurrentFile);
   App.els.enhanceBtn.disabled = !ONNXEngine.isLoaded;
+  updateFastModeButtonState();
 
   Utils.showNotification('info', 'File Ready', `"${file.name}" loaded successfully.`);
 
   if (!ONNXEngine.isLoaded) {
-    Utils.showNotification('warning', 'Model Chahiye', 'Enhance karne se pehle "Setup AI Model" section me model upload karo.');
+    Utils.showNotification('warning', 'Model Load Ho Raha Hai', 'AI model background me load ho raha hai, thoda wait karo.');
   }
 }
 
@@ -667,6 +601,7 @@ function removeCurrentFile() {
   }
   App.els.fileInput.value = '';
   App.els.enhanceBtn.disabled = App.state.batchQueue.length === 0 || !ONNXEngine.isLoaded;
+  updateFastModeButtonState();
   UI.resetUploadCard();
 }
 
@@ -765,6 +700,47 @@ function initActionButtons() {
   App.els.enhanceBtn.addEventListener('click', startEnhancement);
   App.els.resetBtn.addEventListener('click', fullReset);
   App.els.cancelBtn.addEventListener('click', cancelProcessing);
+
+  if (App.els.fastModeBtn) {
+    App.els.fastModeBtn.addEventListener('click', startFastModeEnhancement);
+  }
+}
+
+async function startFastModeEnhancement() {
+  if (App.state.isProcessing) return;
+
+  if (!ONNXEngine.isLoaded) {
+    Utils.showNotification('error', 'Model Load Nahi Hua', 'AI model abhi bhi load ho raha hai, thoda wait karo.');
+    return;
+  }
+  if (!App.state.currentFile) {
+    Utils.showNotification('error', 'No File', 'Pehle koi image select karo.');
+    return;
+  }
+
+  const file = App.state.currentFile;
+  DebugPanel.log('info', `Fast Mode enhancement started for: ${file.name}`);
+
+  beginProcessing('Fast Mode — Analyzing & Enhancing', 'Analyzing image quality...');
+
+  try {
+    const result = await ImageProcessor.upscaleImageFast(file, (pct, stage) => {
+      UI.updateProgress(pct, stage);
+      DebugPanel.log('info', `[Fast Mode ${pct}%] ${stage}`);
+    }, () => App.state.cancelled);
+
+    if (App.state.cancelled) return finishCancelled();
+
+    DebugPanel.log('success', `Fast Mode complete. Plan: ${JSON.stringify(result.plan)}${result.retried ? ' (retried once)' : ''}`);
+    completeImageResult(file, result);
+
+    if (result.retried) {
+      Utils.showNotification('info', 'Auto-Retry Hui', 'Pehla result quality check me fail hua, gentler settings se dobara enhance kiya gaya.');
+    }
+  } catch (err) {
+    DebugPanel.log('error', `Fast Mode failed: ${err.message}\n${err.stack || ''}`);
+    handleProcessingError(err);
+  }
 }
 
 async function startEnhancement() {
@@ -772,7 +748,7 @@ async function startEnhancement() {
 
   if (!ONNXEngine.isLoaded) {
     Utils.showNotification('error', 'Model Load Nahi Hua', 'Pehle "Setup AI Model" section me model download & upload karo.');
-    App.els.modelUploadBtn?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    App.els.useLiteModelBtn?.scrollIntoView({ behavior: 'smooth', block: 'center' });
     return;
   }
 
@@ -919,8 +895,7 @@ async function ensureModelLoaded() {
   }
 
   throw new Error(
-    'AI model not loaded. Go to the "Setup AI Model" section, download the model file, ' +
-    'then upload it there before enhancing.'
+    'AI model not loaded yet. Wait a few seconds for the Lite Model to finish loading in the background, or tap "Use Lite Model" in the AI Model section.'
   );
 }
 
@@ -929,6 +904,7 @@ function beginProcessing(title, initialStage) {
   App.state.cancelled = false;
   App.state.startTime = Date.now();
   App.els.enhanceBtn.disabled = true;
+  updateFastModeButtonState();
 
   App.els.progressSection.classList.remove('hidden');
   App.els.progressTitle.textContent = title;
@@ -946,6 +922,7 @@ function cancelProcessing() {
 function finishCancelled() {
   App.state.isProcessing = false;
   App.els.enhanceBtn.disabled = false;
+  updateFastModeButtonState();
   App.els.progressSection.classList.add('hidden');
   DebugPanel.log('info', 'Processing cancelled successfully.');
   Utils.showNotification('info', 'Cancelled', 'Processing was cancelled by user.');
@@ -955,12 +932,14 @@ function handleProcessingError(err) {
   console.error('Processing error:', err);
   App.state.isProcessing = false;
   App.els.enhanceBtn.disabled = false;
+  updateFastModeButtonState();
   App.els.progressSection.classList.add('hidden');
   Utils.showNotification('error', 'Processing Failed', err.message || 'An unexpected error occurred during AI processing.');
 }
 
 function completeImageResult(originalFile, result, isBatch = false) {
   App.state.isProcessing = false;
+  updateFastModeButtonState();
   App.state.resultBlob = result.blob;
   App.els.progressSection.classList.add('hidden');
 
