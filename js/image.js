@@ -10,12 +10,21 @@
    - Stitch tiles back together into the final upscaled image
    - Optional denoise pass (simple bilateral-style smoothing on canvas)
 
+   Two entry points:
+   - upscaleImage()      — manual mode, uses the settings the person chose
+                            in the Settings panel exactly as given.
+   - upscaleImageFast()  — "Fast Mode": analyzes the image first (via
+                            ImageAnalyzer), decides scale + pass strengths
+                            automatically (via EnhancementPlanner), runs
+                            the same AI model, and validates the result —
+                            retrying once with milder settings if the
+                            output actually came out worse than the input.
+
    LITE MODEL SUPPORT: the bundled lite model (RealESR-general-x4v3) only
-   accepts fixed 128x128 input tiles. When it's the active model, every
-   tile — including partial tiles at the image edges — is padded up to
-   exactly 128x128 before inference, then the output is cropped back down
-   to the tile's real (unpadded) area before stitching. The full
-   Real-ESRGAN model keeps working exactly as before (dynamic tile sizes).
+   accepts fixed 128x128 input tiles. Every tile — including partial tiles
+   at the image edges — is padded up to exactly 128x128 before inference,
+   then the output is cropped back down to the tile's real (unpadded) area
+   before stitching.
    ========================================================================== */
 
 'use strict';
@@ -23,8 +32,8 @@
 const ImageProcessor = {
 
   /* ------------------------------------------------------------------
-     MAIN ENTRY POINT — Upscale a single image File using Real-ESRGAN
-     settings: { scale, tileSize, faceEnhance, denoise, backend }
+     MAIN ENTRY POINT (MANUAL MODE) — Upscale a single image File
+     settings: { scale, tileSize, faceEnhance, denoise, sharpen, edgeEnhance, textureEnhance }
      onProgress(percent 0-100, stageText)
      isCancelled(): function returning true if user cancelled
      Returns: { blob, width, height }
@@ -32,107 +41,13 @@ const ImageProcessor = {
   async upscaleImage(file, settings, onProgress = () => {}, isCancelled = () => false) {
     onProgress(0, 'Reading image file...');
 
-    const { img, url } = await Utils.loadImageFromFile(file);
-    const srcWidth = img.naturalWidth;
-    const srcHeight = img.naturalHeight;
-
-    // Draw the source image onto a canvas so we can read pixel data
-    const srcCanvas = document.createElement('canvas');
-    srcCanvas.width = srcWidth;
-    srcCanvas.height = srcHeight;
-    const srcCtx = srcCanvas.getContext('2d', { willReadFrequently: true });
-    srcCtx.drawImage(img, 0, 0);
-    URL.revokeObjectURL(url);
-
-    onProgress(5, 'Preparing tiles...');
-
+    const srcCanvas = await this._loadFileToCanvas(file);
     const scale = settings.scale || 4;
-    const isLiteModel = ONNXEngine.activeModelType === 'lite';
 
-    // The lite model only accepts fixed-size 128x128 tiles. To still get
-    // seamless stitching, we shrink the "core" tile size so that core +
-    // overlap-on-both-sides adds up to exactly 128 (its fixed input size).
-    const LITE_OVERLAP = 16;
-    const FULL_OVERLAP = 24; // slightly larger than before for a smoother blend band
-
-    const tileSize = isLiteModel
-      ? (ONNXEngine.LITE_MODEL_FIXED_TILE - 2 * LITE_OVERLAP) // 128 - 32 = 96
-      : (settings.tileSize && settings.tileSize > 0 ? settings.tileSize : Math.max(srcWidth, srcHeight));
-
-    const overlap = isLiteModel ? LITE_OVERLAP : FULL_OVERLAP;
-
-    // Build a list of tile regions covering the full image
-    const tiles = this._buildTileGrid(srcWidth, srcHeight, tileSize, overlap);
-
-    // Output canvas is scale x bigger than source
-    const outCanvas = document.createElement('canvas');
-    outCanvas.width = srcWidth * scale;
-    outCanvas.height = srcHeight * scale;
+    const outCanvas = await this._runAIUpscale(srcCanvas, scale, (pct, stage) => {
+      onProgress(Math.round(pct * 0.9), stage);
+    }, isCancelled);
     const outCtx = outCanvas.getContext('2d');
-
-    let processedTiles = 0;
-    const totalTiles = tiles.length;
-
-    for (const tile of tiles) {
-      if (isCancelled()) {
-        throw new Error('Processing cancelled by user.');
-      }
-
-      const stagePct = Math.round((processedTiles / totalTiles) * 90);
-      onProgress(stagePct, `AI upscaling tile ${processedTiles + 1}/${totalTiles}...`);
-
-      // Extract the tile's pixel data (with overlap padding) from source canvas
-      const tileImageData = srcCtx.getImageData(tile.sx, tile.sy, tile.sw, tile.sh);
-
-      let outTileImageData;
-
-      if (isLiteModel) {
-        // ---- LITE MODEL PATH: pad tile up to fixed 128x128 before inference ----
-        const fixedSize = ONNXEngine.LITE_MODEL_FIXED_TILE;
-        const paddedImageData = this._padImageDataTo(tileImageData, fixedSize, fixedSize);
-        const tensorData = this._imageDataToTensor(paddedImageData);
-
-        const { data: outputData, dims } = await ONNXEngine.runInference(tensorData, fixedSize, fixedSize);
-
-        const paddedOutW = dims[3];
-        const paddedOutH = dims[2];
-        const paddedOutImageData = this._tensorToImageData(outputData, paddedOutW, paddedOutH);
-
-        // Crop off the fixed-128 fill-padding (not the overlap padding) —
-        // this brings us back to exactly tile.sw*scale x tile.sh*scale
-        outTileImageData = this._cropImageData(paddedOutImageData, 0, 0, tile.sw * scale, tile.sh * scale);
-      } else {
-        // ---- FULL MODEL PATH: dynamic tile size ----
-        const tensorData = this._imageDataToTensor(tileImageData);
-        const { data: outputData, dims } = await ONNXEngine.runInference(tensorData, tile.sw, tile.sh);
-        outTileImageData = this._tensorToImageData(outputData, dims[3], dims[2]);
-      }
-
-      // Feather the overlap edges (fades to 0 alpha only where a neighbor
-      // tile exists) so the two tiles blend smoothly instead of showing
-      // a hard seam line when composited.
-      outTileImageData = this._applyFeather(
-        outTileImageData,
-        tile.padLeft * scale,
-        tile.padRight * scale,
-        tile.padTop * scale,
-        tile.padBottom * scale
-      );
-
-      // Draw the FULL (uncropped) feathered tile at its true source
-      // position — normal alpha compositing handles the blend.
-      const tileCanvas = document.createElement('canvas');
-      tileCanvas.width = outTileImageData.width;
-      tileCanvas.height = outTileImageData.height;
-      tileCanvas.getContext('2d').putImageData(outTileImageData, 0, 0);
-
-      outCtx.drawImage(tileCanvas, tile.sx * scale, tile.sy * scale);
-
-      processedTiles++;
-
-      // Yield control back to the browser so UI stays responsive
-      await Utils.sleep(0);
-    }
 
     onProgress(92, 'Applying post-processing...');
 
@@ -142,36 +57,17 @@ const ImageProcessor = {
 
     if (settings.faceEnhance) {
       onProgress(94, 'Enhancing facial details...');
-      try {
-        const sharpened = PostProcess.applyConvolution(outCanvas, 'sharpen', 0.5);
-        outCtx.clearRect(0, 0, outCanvas.width, outCanvas.height);
-        outCtx.drawImage(sharpened, 0, 0);
-      } catch (e) {
-        // GPU filter unavailable on this device — fall back to the slower JS version
-        this._applySharpen(outCtx, outCanvas.width, outCanvas.height);
-      }
+      this._safeGpuFilter(outCtx, outCanvas, 'sharpen', 0.5);
     }
 
     if (settings.sharpen) {
       onProgress(95, 'Sharpening (GPU)...');
-      try {
-        const sharpened = PostProcess.applyConvolution(outCanvas, 'sharpen', 0.6);
-        outCtx.clearRect(0, 0, outCanvas.width, outCanvas.height);
-        outCtx.drawImage(sharpened, 0, 0);
-      } catch (e) {
-        this._applySharpen(outCtx, outCanvas.width, outCanvas.height);
-      }
+      this._safeGpuFilter(outCtx, outCanvas, 'sharpen', 0.6);
     }
 
     if (settings.edgeEnhance) {
       onProgress(96, 'Enhancing edges (GPU)...');
-      try {
-        const edged = PostProcess.applyConvolution(outCanvas, 'edge', 0.45);
-        outCtx.clearRect(0, 0, outCanvas.width, outCanvas.height);
-        outCtx.drawImage(edged, 0, 0);
-      } catch (e) {
-        DebugPanel.log('warn', `Edge enhancement skipped: ${e.message}`);
-      }
+      this._safeGpuFilter(outCtx, outCanvas, 'edge', 0.45);
     }
 
     if (settings.textureEnhance) {
@@ -193,6 +89,279 @@ const ImageProcessor = {
       width: outCanvas.width,
       height: outCanvas.height
     };
+  },
+
+  /* ------------------------------------------------------------------
+     FAST MODE ENTRY POINT — Analyze first, decide the plan, enhance,
+     then validate the result and retry once (milder) if it degraded.
+     Always runs the AI model at its native 4x, then resizes down to
+     the decided target scale if the plan calls for less than 4x —
+     the lite model itself can't natively output 1.5x/2x/3x, so this
+     is how "adaptive scaling" is actually achieved.
+     Returns: { blob, width, height, inputMetrics, outputMetrics, plan, retried }
+     ------------------------------------------------------------------ */
+  async upscaleImageFast(file, onProgress = () => {}, isCancelled = () => false) {
+    onProgress(0, 'Reading image file...');
+    const srcCanvas = await this._loadFileToCanvas(file);
+
+    onProgress(3, 'Analyzing image quality (resolution, blur, noise, contrast)...');
+    const inputMetrics = ImageAnalyzer.analyze(srcCanvas);
+    DebugPanel.log('info', `Fast Mode analysis: ${JSON.stringify(inputMetrics)}`);
+
+    let plan = EnhancementPlanner.decide(inputMetrics);
+    DebugPanel.log('info', `Fast Mode plan: ${JSON.stringify(plan)}`);
+    onProgress(6, `Plan: ${plan.targetScale}x scale, adaptive denoise/sharpen/texture...`);
+
+    let result = await this._runFastPipeline(srcCanvas, plan, onProgress, isCancelled);
+    const outputMetrics = ImageAnalyzer.analyze(result.canvas);
+    const validation = EnhancementPlanner.validate(inputMetrics, outputMetrics);
+    let retried = false;
+
+    if (!validation.passed) {
+      DebugPanel.log('warn', `Fast Mode validation failed: ${validation.reason} Retrying with milder settings...`);
+      onProgress(60, 'Quality check failed — retrying with gentler settings...');
+
+      plan = {
+        ...plan,
+        denoiseAmount: plan.denoiseAmount * 0.5,
+        sharpenAmount: Math.min(0.8, plan.sharpenAmount * 1.3), // less denoise blur, a bit more sharpen to compensate
+        textureAmount: plan.textureAmount * 0.5
+      };
+      result = await this._runFastPipeline(srcCanvas, plan, onProgress, isCancelled);
+      retried = true;
+    } else {
+      DebugPanel.log('success', 'Fast Mode validation passed on first attempt.');
+    }
+
+    onProgress(98, 'Encoding final image...');
+    const blob = await Utils.canvasToBlob(result.canvas, 'image/png');
+    onProgress(100, 'Done!');
+
+    return {
+      blob,
+      width: result.canvas.width,
+      height: result.canvas.height,
+      inputMetrics,
+      outputMetrics: ImageAnalyzer.analyze(result.canvas),
+      plan,
+      retried
+    };
+  },
+
+  /* ------------------------------------------------------------------
+     Runs one full pass of: AI upscale (4x) -> resize to target scale ->
+     denoise -> sharpen -> texture -> color/contrast recovery, using the
+     strengths given in `plan`. Shared by the first attempt and the retry.
+     ------------------------------------------------------------------ */
+  async _runFastPipeline(srcCanvas, plan, onProgress, isCancelled) {
+    let outCanvas = await this._runAIUpscale(srcCanvas, 4, (pct, stage) => {
+      onProgress(6 + Math.round(pct * 0.5), stage); // 6-56%
+    }, isCancelled);
+
+    if (plan.targetScale < 4) {
+      onProgress(58, `Resizing AI output down to ${plan.targetScale}x target (avoids fake over-resolution)...`);
+      outCanvas = this._resizeCanvas(
+        outCanvas,
+        Math.round(srcCanvas.width * plan.targetScale),
+        Math.round(srcCanvas.height * plan.targetScale)
+      );
+    }
+
+    const outCtx = outCanvas.getContext('2d');
+
+    if (plan.denoiseAmount > 0) {
+      onProgress(70, 'Denoise pass...');
+      this._applyDenoise(outCtx, outCanvas.width, outCanvas.height, plan.denoiseAmount);
+    }
+
+    if (plan.sharpenAmount > 0) {
+      onProgress(80, 'Adaptive sharpen...');
+      this._safeGpuFilter(outCtx, outCanvas, 'sharpen', plan.sharpenAmount);
+    }
+
+    if (plan.textureAmount > 0) {
+      onProgress(88, 'Texture recovery...');
+      try {
+        PostProcess.applyTextureBoost(outCtx, outCanvas.width, outCanvas.height, plan.textureAmount);
+      } catch (e) {
+        DebugPanel.log('warn', `Texture recovery skipped: ${e.message}`);
+      }
+    }
+
+    if (plan.colorBoost > 0 || plan.contrastBoost > 0) {
+      onProgress(92, 'Color & contrast recovery...');
+      this._applyColorContrastRecovery(outCtx, outCanvas.width, outCanvas.height, plan.colorBoost, plan.contrastBoost);
+    }
+
+    return { canvas: outCanvas };
+  },
+
+  /* ------------------------------------------------------------------
+     LOAD A FILE INTO A FRESH SOURCE CANVAS
+     ------------------------------------------------------------------ */
+  async _loadFileToCanvas(file) {
+    const { img, url } = await Utils.loadImageFromFile(file);
+    const canvas = document.createElement('canvas');
+    canvas.width = img.naturalWidth;
+    canvas.height = img.naturalHeight;
+    canvas.getContext('2d', { willReadFrequently: true }).drawImage(img, 0, 0);
+    URL.revokeObjectURL(url);
+    return canvas;
+  },
+
+  /* ------------------------------------------------------------------
+     RESIZE A CANVAS TO EXACT TARGET DIMENSIONS using progressive
+     halving (repeatedly downscaling by ~2x) instead of one big jump —
+     this avoids moire/aliasing artifacts that a single large downscale
+     can introduce, giving a cleaner result.
+     ------------------------------------------------------------------ */
+  _resizeCanvas(sourceCanvas, targetWidth, targetHeight) {
+    let current = sourceCanvas;
+    let curW = current.width;
+    let curH = current.height;
+
+    while (curW > targetWidth * 1.5 || curH > targetHeight * 1.5) {
+      const nextW = Math.max(targetWidth, Math.round(curW / 2));
+      const nextH = Math.max(targetHeight, Math.round(curH / 2));
+      const stepCanvas = document.createElement('canvas');
+      stepCanvas.width = nextW;
+      stepCanvas.height = nextH;
+      const stepCtx = stepCanvas.getContext('2d');
+      stepCtx.imageSmoothingEnabled = true;
+      stepCtx.imageSmoothingQuality = 'high';
+      stepCtx.drawImage(current, 0, 0, nextW, nextH);
+      current = stepCanvas;
+      curW = nextW;
+      curH = nextH;
+    }
+
+    const finalCanvas = document.createElement('canvas');
+    finalCanvas.width = targetWidth;
+    finalCanvas.height = targetHeight;
+    const finalCtx = finalCanvas.getContext('2d');
+    finalCtx.imageSmoothingEnabled = true;
+    finalCtx.imageSmoothingQuality = 'high';
+    finalCtx.drawImage(current, 0, 0, targetWidth, targetHeight);
+
+    return finalCanvas;
+  },
+
+  /* ------------------------------------------------------------------
+     COLOR & CONTRAST RECOVERY — small native saturation/contrast boost.
+     Amounts are small (plan.colorBoost/contrastBoost are typically
+     0.04-0.15) so this stays natural instead of looking "processed."
+     ------------------------------------------------------------------ */
+  _applyColorContrastRecovery(ctx, width, height, colorBoost, contrastBoost) {
+    const original = document.createElement('canvas');
+    original.width = width;
+    original.height = height;
+    original.getContext('2d').drawImage(ctx.canvas, 0, 0);
+
+    ctx.save();
+    ctx.filter = `saturate(${1 + colorBoost}) contrast(${1 + contrastBoost})`;
+    ctx.drawImage(original, 0, 0);
+    ctx.restore();
+  },
+
+  /* ------------------------------------------------------------------
+     RUN A GPU CONVOLUTION FILTER WITH A SAFE CPU FALLBACK
+     ------------------------------------------------------------------ */
+  _safeGpuFilter(ctx, canvas, kernelName, amount) {
+    try {
+      const result = PostProcess.applyConvolution(canvas, kernelName, amount);
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(result, 0, 0);
+    } catch (e) {
+      if (kernelName === 'sharpen') {
+        this._applySharpen(ctx, canvas.width, canvas.height);
+      } else {
+        DebugPanel.log('warn', `GPU filter "${kernelName}" skipped: ${e.message}`);
+      }
+    }
+  },
+
+  /* ------------------------------------------------------------------
+     CORE AI UPSCALE — tiles the source canvas, runs it through the
+     active ONNX model (lite model only, since the full model has been
+     removed), and stitches the result back together with feathered
+     seams. Returns a fresh canvas at srcCanvas size * scale.
+     Shared by both upscaleImage() and upscaleImageFast().
+     ------------------------------------------------------------------ */
+  async _runAIUpscale(srcCanvas, scale, onProgress = () => {}, isCancelled = () => false) {
+    const srcWidth = srcCanvas.width;
+    const srcHeight = srcCanvas.height;
+    const srcCtx = srcCanvas.getContext('2d', { willReadFrequently: true });
+
+    onProgress(5, 'Preparing tiles...');
+
+    // The lite model only accepts fixed-size 128x128 tiles. To still get
+    // seamless stitching, we shrink the "core" tile size so that core +
+    // overlap-on-both-sides adds up to exactly 128 (its fixed input size).
+    const LITE_OVERLAP = 16;
+    const tileSize = ONNXEngine.LITE_MODEL_FIXED_TILE - 2 * LITE_OVERLAP; // 128 - 32 = 96
+    const overlap = LITE_OVERLAP;
+
+    const tiles = this._buildTileGrid(srcWidth, srcHeight, tileSize, overlap);
+
+    const outCanvas = document.createElement('canvas');
+    outCanvas.width = srcWidth * scale;
+    outCanvas.height = srcHeight * scale;
+    const outCtx = outCanvas.getContext('2d');
+
+    let processedTiles = 0;
+    const totalTiles = tiles.length;
+
+    for (const tile of tiles) {
+      if (isCancelled()) {
+        throw new Error('Processing cancelled by user.');
+      }
+
+      const stagePct = Math.round((processedTiles / totalTiles) * 100);
+      onProgress(stagePct, `AI upscaling tile ${processedTiles + 1}/${totalTiles}...`);
+
+      const tileImageData = srcCtx.getImageData(tile.sx, tile.sy, tile.sw, tile.sh);
+
+      const fixedSize = ONNXEngine.LITE_MODEL_FIXED_TILE;
+      const paddedImageData = this._padImageDataTo(tileImageData, fixedSize, fixedSize);
+      const tensorData = this._imageDataToTensor(paddedImageData);
+
+      const { data: outputData, dims } = await ONNXEngine.runInference(tensorData, fixedSize, fixedSize);
+
+      const paddedOutImageData = this._tensorToImageData(outputData, dims[3], dims[2]);
+
+      // Crop off the fixed-128 fill-padding (not the overlap padding), then
+      // resize from the model's native 4x to whatever scale was requested.
+      let outTileImageData = this._cropImageData(paddedOutImageData, 0, 0, tile.sw * 4, tile.sh * 4);
+
+      if (scale !== 4) {
+        const tileCanvasNative = document.createElement('canvas');
+        tileCanvasNative.width = tile.sw * 4;
+        tileCanvasNative.height = tile.sh * 4;
+        tileCanvasNative.getContext('2d').putImageData(outTileImageData, 0, 0);
+        const resized = this._resizeCanvas(tileCanvasNative, Math.round(tile.sw * scale), Math.round(tile.sh * scale));
+        outTileImageData = resized.getContext('2d').getImageData(0, 0, resized.width, resized.height);
+      }
+
+      outTileImageData = this._applyFeather(
+        outTileImageData,
+        tile.padLeft * scale,
+        tile.padRight * scale,
+        tile.padTop * scale,
+        tile.padBottom * scale
+      );
+
+      const tileCanvas = document.createElement('canvas');
+      tileCanvas.width = outTileImageData.width;
+      tileCanvas.height = outTileImageData.height;
+      tileCanvas.getContext('2d').putImageData(outTileImageData, 0, 0);
+
+      outCtx.drawImage(tileCanvas, Math.round(tile.sx * scale), Math.round(tile.sy * scale));
+
+      processedTiles++;
+      await Utils.sleep(0);
+    }
+
+    return outCanvas;
   },
 
   /* ------------------------------------------------------------------
@@ -391,7 +560,7 @@ const ImageProcessor = {
      The native filter achieves the same "70% original + 30% blurred"
      smoothing look, just computed natively instead of pixel-by-pixel.
      ------------------------------------------------------------------ */
-  _applyDenoise(ctx, width, height) {
+  _applyDenoise(ctx, width, height, amount = 0.3) {
     // Snapshot the current (sharp) output before blending a blurred copy over it
     const original = document.createElement('canvas');
     original.width = width;
@@ -400,7 +569,7 @@ const ImageProcessor = {
 
     ctx.save();
     ctx.filter = 'blur(0.6px)';   // light touch, matches the old radius-1 softness
-    ctx.globalAlpha = 0.3;         // same 70/30 blend ratio as before
+    ctx.globalAlpha = amount;      // default 0.3 matches the old fixed 70/30 blend ratio
     ctx.drawImage(original, 0, 0);
     ctx.restore();
   },
