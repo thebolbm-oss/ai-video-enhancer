@@ -172,45 +172,50 @@ const ONNXEngine = {
   async _doLoadLiteModel(onProgress) {
     onProgress(15, 'Loading lightweight model from repo...');
 
-    // The lite model is tiny (~5MB) — WASM alone is already fast enough
-    // for it, and skipping WebGPU here avoids the flaky-hang issue some
-    // phones hit on WebGPU init. WebGPU is still used for the full model
-    // where the speed gain actually matters.
-    const backend = 'wasm';
+    // Try WebGPU first for real GPU-accelerated speed, falling back to
+    // WASM (CPU) only if WebGPU fails or hangs. Each attempt is time-
+    // bounded via _createSessionWithTimeout so a flaky WebGPU init on
+    // some phones can never freeze the app — it just falls through.
+    const backendsToTry = ['webgpu', 'wasm'];
     let session = null;
     let lastError = null;
+    let usedBackend = null;
 
     // Try each CDN mirror for the WASM runtime files in turn — if one is
     // blocked/unreachable on this network (common cause of a stuck load),
     // move on to the next instead of failing outright.
+    outer:
     for (let cdnIndex = 0; cdnIndex < this.ORT_CDN_CANDIDATES.length; cdnIndex++) {
       const cdnUrl = this.ORT_CDN_CANDIDATES[cdnIndex];
-      try {
-        await this.init(this.activeBackend, cdnIndex);
-        onProgress(50, `Initializing ${backend.toUpperCase()} for lite model (source ${cdnIndex + 1}/${this.ORT_CDN_CANDIDATES.length})...`);
-        DebugPanel.log('info', `Trying ONNX runtime CDN: ${cdnUrl}`);
 
-        session = await this._createSessionWithTimeout(
-          this.LITE_MODEL_PATH,
-          {
-            executionProviders: [backend],
-            graphOptimizationLevel: 'all',
-            externalData: [
-              {
-                path: this.LITE_MODEL_DATA_NAME,
-                data: this.LITE_MODEL_DATA_PATH
-              }
-            ]
-          },
-          25000 // 25s per CDN attempt — with 2 CDNs, worst case ~50s total before giving up entirely
-        );
-        this.activeBackend = backend;
-        DebugPanel.log('success', `ONNX runtime loaded successfully from: ${cdnUrl}`);
-        break;
-      } catch (err) {
-        console.warn(`Lite model load via CDN "${cdnUrl}" failed:`, err);
-        DebugPanel.log('warn', `CDN "${cdnUrl}" failed or timed out — ${cdnIndex < this.ORT_CDN_CANDIDATES.length - 1 ? 'trying next mirror...' : 'no more mirrors to try.'}`);
-        lastError = err;
+      for (const backend of backendsToTry) {
+        try {
+          await this.init(backend, cdnIndex);
+          onProgress(50, `Initializing ${backend.toUpperCase()} for lite model (source ${cdnIndex + 1}/${this.ORT_CDN_CANDIDATES.length})...`);
+          DebugPanel.log('info', `Trying ${backend.toUpperCase()} via CDN: ${cdnUrl}`);
+
+          session = await this._createSessionWithTimeout(
+            this.LITE_MODEL_PATH,
+            {
+              executionProviders: [backend],
+              graphOptimizationLevel: 'all',
+              externalData: [
+                {
+                  path: this.LITE_MODEL_DATA_NAME,
+                  data: this.LITE_MODEL_DATA_PATH
+                }
+              ]
+            },
+            backend === 'webgpu' ? 15000 : 25000 // shorter leash for WebGPU since it's the one known to occasionally hang
+          );
+          usedBackend = backend;
+          DebugPanel.log('success', `Lite model loaded on ${backend.toUpperCase()} via: ${cdnUrl}`);
+          break outer;
+        } catch (err) {
+          console.warn(`Lite model load via ${backend.toUpperCase()} / CDN "${cdnUrl}" failed:`, err);
+          DebugPanel.log('warn', `${backend.toUpperCase()} on "${cdnUrl}" failed or timed out — trying next option...`);
+          lastError = err;
+        }
       }
     }
 
@@ -222,6 +227,7 @@ const ONNXEngine = {
       );
     }
 
+    this.activeBackend = usedBackend;
     this.session = session;
     this.isLoaded = true;
     this.activeModelType = 'lite';
