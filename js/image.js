@@ -44,7 +44,22 @@ const ImageProcessor = {
     const srcCanvas = await this._loadFileToCanvas(file);
     const scale = settings.scale || 4;
 
-    const outCanvas = await this._runAIUpscale(srcCanvas, scale, (pct, stage) => {
+    // Pre-scale the source when a lower scale is requested — the model
+    // always outputs a fixed 4x per tile, so shrinking the input first
+    // (instead of upscaling fully then shrinking the output) means fewer/
+    // smaller tiles and genuinely less AI compute time, not just a
+    // smaller final file.
+    let aiInput = srcCanvas;
+    if (scale < 4) {
+      const preScale = scale / 4;
+      aiInput = this._resizeCanvas(
+        srcCanvas,
+        Math.max(1, Math.round(srcCanvas.width * preScale)),
+        Math.max(1, Math.round(srcCanvas.height * preScale))
+      );
+    }
+
+    const outCanvas = await this._runAIUpscale(aiInput, 4, (pct, stage) => {
       onProgress(Math.round(pct * 0.9), stage);
     }, isCancelled);
     const outCtx = outCanvas.getContext('2d');
@@ -154,17 +169,37 @@ const ImageProcessor = {
      strengths given in `plan`. Shared by the first attempt and the retry.
      ------------------------------------------------------------------ */
   async _runFastPipeline(srcCanvas, plan, onProgress, isCancelled) {
-    let outCanvas = await this._runAIUpscale(srcCanvas, 4, (pct, stage) => {
-      onProgress(6 + Math.round(pct * 0.5), stage); // 6-56%
-    }, isCancelled);
+    let outCanvas;
 
-    if (plan.targetScale < 4) {
-      onProgress(58, `Resizing AI output down to ${plan.targetScale}x target (avoids fake over-resolution)...`);
-      outCanvas = this._resizeCanvas(
-        outCanvas,
-        Math.round(srcCanvas.width * plan.targetScale),
-        Math.round(srcCanvas.height * plan.targetScale)
+    if (plan.targetScale <= 1) {
+      // Source is already large/sharp enough — AI upscaling would add
+      // nothing real. Skip it entirely instead of running (and paying
+      // the time cost of) a 4x pass just to shrink it back down.
+      onProgress(30, 'Source already sharp enough — skipping AI upscale, applying cleanup only...');
+      outCanvas = srcCanvas;
+    } else if (plan.targetScale < 4) {
+      // KEY SPEED OPTIMIZATION: instead of running the AI at its native 4x
+      // on the full-size source and then shrinking the result down to the
+      // target scale (which wastes real compute time — the AI still does
+      // 4x worth of work no matter what you do to the output afterward),
+      // we shrink the SOURCE first so that the AI's fixed 4x lands exactly
+      // on the target scale. Fewer/smaller tiles = genuinely less work for
+      // the AI, not just a smaller file at the end.
+      const preScale = plan.targetScale / 4;
+      onProgress(8, `Pre-scaling source by ${preScale.toFixed(2)}x so AI's native 4x lands on ${plan.targetScale}x target (this is what actually saves time)...`);
+      const preScaledSrc = this._resizeCanvas(
+        srcCanvas,
+        Math.max(1, Math.round(srcCanvas.width * preScale)),
+        Math.max(1, Math.round(srcCanvas.height * preScale))
       );
+      outCanvas = await this._runAIUpscale(preScaledSrc, 4, (pct, stage) => {
+        onProgress(10 + Math.round(pct * 0.5), stage); // 10-60%
+      }, isCancelled);
+    } else {
+      // Full 4x requested — run AI at native resolution, no pre-scaling needed.
+      outCanvas = await this._runAIUpscale(srcCanvas, 4, (pct, stage) => {
+        onProgress(10 + Math.round(pct * 0.5), stage); // 10-60%
+      }, isCancelled);
     }
 
     const outCtx = outCanvas.getContext('2d');
