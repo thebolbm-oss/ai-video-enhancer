@@ -137,6 +137,7 @@ const App = {
     sharpen: false,
     edgeEnhance: false,
     textureEnhance: false,
+    boostMode: false,
     batchMode: false
   },
 
@@ -169,6 +170,7 @@ document.addEventListener('DOMContentLoaded', () => {
     initDownloadControls();
     initModelSetup();
     initVideoEngineSetup();
+    initBoostMode();
     DebugPanel.log('success', 'All buttons and controls wired up.');
 
     setYear();
@@ -201,6 +203,8 @@ function cacheElements() {
     'modelSetupStatus', 'useLiteModelBtn',
     // Fast Mode
     'fastModeBtn',
+    // WebGPU Boost Mode
+    'boostModeCard', 'boostModeBtn', 'boostModeBtnText', 'boostModeIcon', 'boostActiveBadge',
     // Video engine setup (ffmpeg-core.wasm download + upload + cache)
     'wasmDownloadLink', 'wasmFileInput', 'wasmUploadBtn',
     'wasmSetupProgress', 'wasmProgressBarInner', 'wasmProgressText',
@@ -261,6 +265,39 @@ function updateMemoryUsage() {
   } else {
     App.els.memoryStatus.textContent = 'Unavailable';
   }
+}
+
+/* ==========================================================================
+   WEBGPU BOOST MODE — toggles concurrent tile processing (real: multiple
+   AI inference calls in flight at once instead of strictly one-by-one),
+   with a visible pulsing animation on the card and a fixed corner badge
+   while it's active.
+   ========================================================================== */
+function initBoostMode() {
+  if (!App.els.boostModeBtn) return;
+
+  App.els.boostModeBtn.addEventListener('click', () => {
+    App.settings.boostMode = !App.settings.boostMode;
+    applyBoostModeUI();
+    DebugPanel.log('info', `WebGPU Boost Mode ${App.settings.boostMode ? 'ENABLED (concurrent tile processing)' : 'disabled'}.`);
+    Utils.showNotification(
+      App.settings.boostMode ? 'success' : 'info',
+      App.settings.boostMode ? 'Boost Mode ON' : 'Boost Mode OFF',
+      App.settings.boostMode
+        ? 'Ab tiles parallel me process honge — zyada RAM/CPU use hoga.'
+        : 'Normal (one-at-a-time) processing wapas ho gaya.'
+    );
+  });
+
+  applyBoostModeUI();
+}
+
+function applyBoostModeUI() {
+  const active = App.settings.boostMode;
+
+  if (App.els.boostModeCard) App.els.boostModeCard.classList.toggle('active', active);
+  if (App.els.boostModeBtnText) App.els.boostModeBtnText.textContent = active ? 'Boost Mode: ON' : 'Boost Mode: OFF';
+  if (App.els.boostActiveBadge) App.els.boostActiveBadge.classList.toggle('hidden', !active);
 }
 
 /* ==========================================================================
@@ -499,7 +536,7 @@ function setMode(mode) {
     App.els.uploadHint.textContent = 'Supported: JPG, PNG, WEBP (Max 25MB)';
   } else {
     App.els.fileInput.accept = 'video/*';
-    App.els.uploadHint.textContent = 'Supported: MP4, WEBM, MOV (Max 100MB)';
+    App.els.uploadHint.textContent = 'Supported: MP4, WEBM, MOV (Max 400MB)';
     App.els.batchToggle.checked = false;
     App.settings.batchMode = false;
     App.els.batchList.classList.add('hidden');
@@ -552,7 +589,7 @@ function handleIncomingFiles(files) {
   if (!files || files.length === 0) return;
 
   const expectedType = App.state.mode === 'image' ? 'image' : 'video';
-  const maxSizeMB = App.state.mode === 'image' ? 25 : 100;
+  const maxSizeMB = App.state.mode === 'image' ? 25 : 400;
 
   const validFiles = [];
   for (const file of files) {
@@ -727,7 +764,7 @@ async function startFastModeEnhancement() {
     const result = await ImageProcessor.upscaleImageFast(file, (pct, stage) => {
       UI.updateProgress(pct, stage);
       DebugPanel.log('info', `[Fast Mode ${pct}%] ${stage}`);
-    }, () => App.state.cancelled);
+    }, () => App.state.cancelled, App.settings.boostMode);
 
     if (App.state.cancelled) return finishCancelled();
 
