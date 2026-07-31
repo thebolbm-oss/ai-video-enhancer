@@ -44,6 +44,12 @@
 <!-- ===================== NOTIFICATION CONTAINER ===================== -->
 <div id="notificationContainer" class="notification-container"></div>
 
+<!-- ===================== BOOST ACTIVE BADGE ===================== -->
+<div id="boostActiveBadge" class="boost-active-badge hidden">
+  <span class="boost-active-dot"></span>
+  <i class="fa-solid fa-bolt"></i> BOOST ACTIVE
+</div>
+
 <!-- ===================== LOADING OVERLAY ===================== -->
 <div id="loadingOverlay" class="loading-overlay hidden">
   <div class="loading-box glass">
@@ -250,6 +256,24 @@
           <i class="fa-solid fa-wand-magic-sparkles"></i> Fast Mode Se Enhance Karo
         </button>
         <p class="fast-mode-note">Filhaal sirf images ke liye — video jald aayega.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== WEBGPU BOOST MODE SECTION ===================== -->
+  <section class="boost-mode-section" id="boostModeSection">
+    <div class="section-container">
+      <div class="boost-mode-card glass" id="boostModeCard">
+        <div class="boost-mode-icon" id="boostModeIcon"><i class="fa-solid fa-microchip"></i></div>
+        <h2 class="boost-mode-title">🚀 WebGPU Boost Mode</h2>
+        <p class="boost-mode-subtitle">
+          ON karne par ek sath <strong>4 tiles parallel</strong> me GPU ko bheje jayenge (ek-ek karke nahi) —
+          zyada RAM/CPU use hoga, lekin genuinely fast enhance hoga. Behtar GPU wale phone pe zyada fayda.
+          Kam RAM wale phone pe agar crash ho to OFF kar dena.
+        </p>
+        <button class="btn btn-lg boost-mode-toggle" id="boostModeBtn">
+          <i class="fa-solid fa-bolt"></i> <span id="boostModeBtnText">Boost Mode: OFF</span>
+        </button>
       </div>
     </div>
   </section>
