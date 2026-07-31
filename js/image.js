@@ -61,7 +61,7 @@ const ImageProcessor = {
 
     const outCanvas = await this._runAIUpscale(aiInput, 4, (pct, stage) => {
       onProgress(Math.round(pct * 0.9), stage);
-    }, isCancelled);
+    }, isCancelled, !!settings.boostMode);
     const outCtx = outCanvas.getContext('2d');
 
     onProgress(92, 'Applying post-processing...');
@@ -115,7 +115,7 @@ const ImageProcessor = {
      is how "adaptive scaling" is actually achieved.
      Returns: { blob, width, height, inputMetrics, outputMetrics, plan, retried }
      ------------------------------------------------------------------ */
-  async upscaleImageFast(file, onProgress = () => {}, isCancelled = () => false) {
+  async upscaleImageFast(file, onProgress = () => {}, isCancelled = () => false, boost = false) {
     onProgress(0, 'Reading image file...');
     const srcCanvas = await this._loadFileToCanvas(file);
 
@@ -127,7 +127,7 @@ const ImageProcessor = {
     DebugPanel.log('info', `Fast Mode plan: ${JSON.stringify(plan)}`);
     onProgress(6, `Plan: ${plan.targetScale}x scale, adaptive denoise/sharpen/texture...`);
 
-    let result = await this._runFastPipeline(srcCanvas, plan, onProgress, isCancelled);
+    let result = await this._runFastPipeline(srcCanvas, plan, onProgress, isCancelled, boost);
     const outputMetrics = ImageAnalyzer.analyze(result.canvas);
     const validation = EnhancementPlanner.validate(inputMetrics, outputMetrics);
     let retried = false;
@@ -142,7 +142,7 @@ const ImageProcessor = {
         sharpenAmount: Math.min(0.8, plan.sharpenAmount * 1.3), // less denoise blur, a bit more sharpen to compensate
         textureAmount: plan.textureAmount * 0.5
       };
-      result = await this._runFastPipeline(srcCanvas, plan, onProgress, isCancelled);
+      result = await this._runFastPipeline(srcCanvas, plan, onProgress, isCancelled, boost);
       retried = true;
     } else {
       DebugPanel.log('success', 'Fast Mode validation passed on first attempt.');
@@ -168,7 +168,7 @@ const ImageProcessor = {
      denoise -> sharpen -> texture -> color/contrast recovery, using the
      strengths given in `plan`. Shared by the first attempt and the retry.
      ------------------------------------------------------------------ */
-  async _runFastPipeline(srcCanvas, plan, onProgress, isCancelled) {
+  async _runFastPipeline(srcCanvas, plan, onProgress, isCancelled, boost = false) {
     let outCanvas;
 
     if (plan.targetScale <= 1) {
@@ -194,12 +194,12 @@ const ImageProcessor = {
       );
       outCanvas = await this._runAIUpscale(preScaledSrc, 4, (pct, stage) => {
         onProgress(10 + Math.round(pct * 0.5), stage); // 10-60%
-      }, isCancelled);
+      }, isCancelled, boost);
     } else {
       // Full 4x requested — run AI at native resolution, no pre-scaling needed.
       outCanvas = await this._runAIUpscale(srcCanvas, 4, (pct, stage) => {
         onProgress(10 + Math.round(pct * 0.5), stage); // 10-60%
-      }, isCancelled);
+      }, isCancelled, boost);
     }
 
     const outCtx = outCanvas.getContext('2d');
@@ -322,7 +322,7 @@ const ImageProcessor = {
      seams. Returns a fresh canvas at srcCanvas size * scale.
      Shared by both upscaleImage() and upscaleImageFast().
      ------------------------------------------------------------------ */
-  async _runAIUpscale(srcCanvas, scale, onProgress = () => {}, isCancelled = () => false) {
+  async _runAIUpscale(srcCanvas, scale, onProgress = () => {}, isCancelled = () => false, boost = false) {
     const srcWidth = srcCanvas.width;
     const srcHeight = srcCanvas.height;
     const srcCtx = srcCanvas.getContext('2d', { willReadFrequently: true });
@@ -346,13 +346,22 @@ const ImageProcessor = {
     let processedTiles = 0;
     const totalTiles = tiles.length;
 
-    for (const tile of tiles) {
+    // BOOST MODE: instead of awaiting each tile's AI inference one at a
+    // time, run several tiles' inference calls concurrently. The actual
+    // canvas drawing for each tile still happens synchronously (JS is
+    // single-threaded, so there's no risk of two tiles corrupting each
+    // other's pixels) — only the GPU/WASM inference work overlaps. This
+    // genuinely uses more memory (several tile buffers in flight at once)
+    // and keeps the GPU queue fuller instead of idling between calls.
+    const concurrency = boost ? Math.max(2, Math.min(4, navigator.hardwareConcurrency || 4)) : 1;
+    if (boost) {
+      DebugPanel.log('info', `Boost Mode active — processing up to ${concurrency} tiles concurrently.`);
+    }
+
+    const processTile = async (tile) => {
       if (isCancelled()) {
         throw new Error('Processing cancelled by user.');
       }
-
-      const stagePct = Math.round((processedTiles / totalTiles) * 100);
-      onProgress(stagePct, `AI upscaling tile ${processedTiles + 1}/${totalTiles}...`);
 
       const tileImageData = srcCtx.getImageData(tile.sx, tile.sy, tile.sw, tile.sh);
 
@@ -390,10 +399,31 @@ const ImageProcessor = {
       tileCanvas.height = outTileImageData.height;
       tileCanvas.getContext('2d').putImageData(outTileImageData, 0, 0);
 
+      // Synchronous draw — safe even when multiple tiles resolve close
+      // together, since JS execution itself is single-threaded.
       outCtx.drawImage(tileCanvas, Math.round(tile.sx * scale), Math.round(tile.sy * scale));
 
       processedTiles++;
+      const stagePct = Math.round((processedTiles / totalTiles) * 100);
+      onProgress(stagePct, `AI upscaling tile ${processedTiles}/${totalTiles}${boost ? ' (Boost Mode)' : ''}...`);
       await Utils.sleep(0);
+    };
+
+    if (concurrency <= 1) {
+      for (const tile of tiles) {
+        await processTile(tile);
+      }
+    } else {
+      let nextIndex = 0;
+      const worker = async () => {
+        while (nextIndex < tiles.length) {
+          if (isCancelled()) throw new Error('Processing cancelled by user.');
+          const myTile = tiles[nextIndex++];
+          await processTile(myTile);
+        }
+      };
+      const workers = Array.from({ length: Math.min(concurrency, tiles.length) }, () => worker());
+      await Promise.all(workers);
     }
 
     return outCanvas;
