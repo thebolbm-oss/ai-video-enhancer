@@ -244,8 +244,9 @@ const ONNXEngine = {
      pad tiles to exactly LITE_MODEL_FIXED_TILE x LITE_MODEL_FIXED_TILE
      before calling this, since that model only accepts fixed-size input.
      ------------------------------------------------------------------ */
-  async runInference(inputTensorData, width, height) {
-    if (!this.isLoaded || !this.session) {
+  async runInference(inputTensorData, width, height, session = null) {
+    const activeSession = session || this.session;
+    if (!this.isLoaded || !activeSession) {
       throw new Error('AI model is not loaded. Choose "Use Lite Model" or upload the full model in the "Setup AI Model" section first.');
     }
 
@@ -253,12 +254,12 @@ const ONNXEngine = {
 
     // Build feeds dynamically based on the session's actual input name,
     // since different Real-ESRGAN ONNX exports may name it differently.
-    const inputName = this.session.inputNames[0] || this.INPUT_NAME;
+    const inputName = activeSession.inputNames[0] || this.INPUT_NAME;
     const feeds = { [inputName]: inputTensor };
 
-    const results = await this.session.run(feeds);
+    const results = await activeSession.run(feeds);
 
-    const outputName = this.session.outputNames[0] || this.OUTPUT_NAME;
+    const outputName = activeSession.outputNames[0] || this.OUTPUT_NAME;
     const output = results[outputName];
 
     if (!output) {
@@ -266,6 +267,48 @@ const ONNXEngine = {
     }
 
     return { data: output.data, dims: output.dims };
+  },
+
+  /* ------------------------------------------------------------------
+     BOOST MODE SESSION POOL — a single ort.InferenceSession can only
+     run one computation at a time internally; calling run() "concurrently"
+     on the SAME session just queues the calls one after another under
+     the hood, giving no real speedup. To get genuine parallel GPU work,
+     we create several fully independent sessions (each with its own
+     model weights loaded) and hand tiles out to them round-robin —
+     each session can then truly compute at the same time as the others,
+     actually loading up the GPU instead of serializing through one queue.
+     ------------------------------------------------------------------ */
+  sessionPool: [],
+
+  async ensureSessionPool(size) {
+    if (this.sessionPool.length >= size) {
+      return this.sessionPool.slice(0, size);
+    }
+
+    const needed = size - this.sessionPool.length;
+    DebugPanel.log('info', `Boost Mode: creating ${needed} additional independent AI session(s) on ${this.activeBackend.toUpperCase()} for true parallel GPU work...`);
+
+    const creations = [];
+    for (let i = 0; i < needed; i++) {
+      creations.push(
+        ort.InferenceSession.create(this.LITE_MODEL_PATH, {
+          executionProviders: [this.activeBackend],
+          graphOptimizationLevel: 'all',
+          externalData: [
+            {
+              path: this.LITE_MODEL_DATA_NAME,
+              data: this.LITE_MODEL_DATA_PATH
+            }
+          ]
+        })
+      );
+    }
+
+    const newSessions = await Promise.all(creations);
+    this.sessionPool.push(...newSessions);
+    DebugPanel.log('success', `Boost Mode: session pool ready with ${this.sessionPool.length} parallel session(s).`);
+    return this.sessionPool.slice(0, size);
   },
 
   /* ------------------------------------------------------------------
