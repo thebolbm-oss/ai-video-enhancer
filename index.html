@@ -227,6 +227,21 @@
           </button>
         </div>
 
+        <div class="backend-slider-box glass">
+          <div class="backend-slider-header">
+            <span id="backendSliderLabel">⚡ WebGPU Force (GPU Full Power)</span>
+          </div>
+          <input type="range" id="backendSlider" class="backend-slider" min="0" max="1" step="1" value="1" />
+          <div class="backend-slider-ends">
+            <span>🖥️ CPU Only</span>
+            <span>⚡ WebGPU Force</span>
+          </div>
+          <p class="backend-slider-note">
+            Left = sirf CPU (WASM) use hoga, hamesha reliable. Right = sirf WebGPU (GPU) use hoga,
+            koi fallback nahi — agar phone WebGPU support nahi karta to load fail ho sakta hai.
+          </p>
+        </div>
+
         <div class="model-setup-progress hidden" id="modelSetupProgress">
           <div class="progress-bar-outer">
             <div class="progress-bar-inner" id="modelProgressBarInner" style="width:0%"></div>
