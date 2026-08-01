@@ -171,6 +171,7 @@ document.addEventListener('DOMContentLoaded', () => {
     initModelSetup();
     initVideoEngineSetup();
     initBoostMode();
+    initBackendSlider();
     DebugPanel.log('success', 'All buttons and controls wired up.');
 
     setYear();
@@ -201,6 +202,7 @@ function cacheElements() {
     // Model setup section (lite model only now)
     'modelSetupProgress', 'modelProgressBarInner', 'modelProgressText',
     'modelSetupStatus', 'useLiteModelBtn',
+    'backendSlider', 'backendSliderLabel',
     // Fast Mode
     'fastModeBtn',
     // WebGPU Boost Mode
@@ -239,7 +241,7 @@ async function detectSystemCapabilities() {
     DebugPanel.log(gpuInfo.available ? 'success' : 'warn', `GPU detection result: ${JSON.stringify(gpuInfo)}`);
 
     App.els.gpuStatus.textContent = gpuInfo.available ? gpuInfo.name : 'Not Available';
-    App.els.backendStatus.textContent = gpuInfo.available ? 'WebGPU Ready' : 'WASM Only';
+    App.els.backendStatus.textContent = gpuInfo.available ? 'WebGPU Detected (Idle)' : 'CPU Only (No WebGPU)';
     if (!ONNXEngine.isLoaded) {
       App.els.modelStatus.textContent = 'Idle (Not Loaded)';
     }
@@ -265,6 +267,43 @@ function updateMemoryUsage() {
   } else {
     App.els.memoryStatus.textContent = 'Unavailable';
   }
+}
+
+/* ==========================================================================
+   CPU <-> WEBGPU FORCE SLIDER
+   Left (0) = force CPU (WASM) only. Right (1) = force WebGPU only, no
+   fallback. Changing this while a model is already loaded disposes the
+   current session(s) and reloads fresh with the new forced backend.
+   ========================================================================== */
+function initBackendSlider() {
+  if (!App.els.backendSlider) return;
+
+  App.els.backendSlider.addEventListener('input', async () => {
+    const isWebGPU = App.els.backendSlider.value === '1';
+    ONNXEngine.forcedBackend = isWebGPU ? 'webgpu' : 'cpu';
+
+    if (App.els.backendSliderLabel) {
+      App.els.backendSliderLabel.textContent = isWebGPU
+        ? '⚡ WebGPU Force (GPU Full Power)'
+        : '🖥️ CPU Only (WASM, No GPU)';
+    }
+
+    DebugPanel.log('info', `Backend slider moved: forcing ${isWebGPU ? 'WebGPU only' : 'CPU (WASM) only'}. Reloading model...`);
+
+    if (App.state.isProcessing) {
+      Utils.showNotification('warning', 'Processing Active', 'Naya backend agli enhancement se apply hoga.');
+      return;
+    }
+
+    // Reload the model fresh with the newly forced backend
+    await ONNXEngine.dispose();
+    ONNXEngine.sessionPool = [];
+    App.els.modelStatus.textContent = 'Idle (Not Loaded)';
+    App.els.enhanceBtn.disabled = true;
+    updateFastModeButtonState();
+
+    await runLiteModelLoad({ showToast: true });
+  });
 }
 
 /* ==========================================================================
