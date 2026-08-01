@@ -228,8 +228,9 @@ const ONNXEngine = {
           DebugPanel.log('success', `Lite model loaded on ${backend.toUpperCase()} via: ${cdnUrl}`);
           break outer;
         } catch (err) {
+          const realReason = (err && err.message) ? err.message : String(err);
           console.warn(`Lite model load via ${backend.toUpperCase()} / CDN "${cdnUrl}" failed:`, err);
-          DebugPanel.log('warn', `${backend.toUpperCase()} on "${cdnUrl}" failed or timed out — trying next option...`);
+          DebugPanel.log('warn', `${backend.toUpperCase()} on "${cdnUrl}" failed: ${realReason}`);
           lastError = err;
         }
       }
@@ -237,9 +238,9 @@ const ONNXEngine = {
 
     if (!session) {
       if (this.forcedBackend === 'webgpu') {
+        const realReason = (lastError && lastError.message) ? lastError.message : 'unknown error';
         throw new Error(
-          'WebGPU-only mode failed — this device/browser does not support WebGPU (or it errored). ' +
-          'Slide the backend control left to "CPU Only" to use WASM instead.'
+          `WebGPU-only mode failed: ${realReason}. Slide the backend control left to "CPU Only" to use WASM instead.`
         );
       }
       throw lastError || new Error(
