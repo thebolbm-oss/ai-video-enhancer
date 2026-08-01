@@ -36,6 +36,12 @@ const ONNXEngine = {
   INPUT_NAME: 'input',
   OUTPUT_NAME: 'output',
 
+  // Controlled by the CPU <-> WebGPU slider in the UI:
+  // null       = auto (try WebGPU first, fall back to WASM if it fails)
+  // 'cpu'      = force WASM only, never attempt WebGPU
+  // 'webgpu'   = force WebGPU only, no fallback at all (as explicitly requested)
+  forcedBackend: 'webgpu',
+
   /* ---------------- LITE MODEL (RealESR-general-x4v3, ~4.65MB) ---------------- */
   // Bundled in the repo itself — same-origin, no CORS issues, no download step.
   // This is now the ONLY model the app uses — the old 69MB full Real-ESRGAN
@@ -172,11 +178,21 @@ const ONNXEngine = {
   async _doLoadLiteModel(onProgress) {
     onProgress(15, 'Loading lightweight model from repo...');
 
-    // Try WebGPU first for real GPU-accelerated speed, falling back to
-    // WASM (CPU) only if WebGPU fails or hangs. Each attempt is time-
-    // bounded via _createSessionWithTimeout so a flaky WebGPU init on
-    // some phones can never freeze the app — it just falls through.
-    const backendsToTry = ['webgpu', 'wasm'];
+    // Backend selection respects the CPU <-> WebGPU slider:
+    // - forcedBackend === 'cpu'    -> WASM only, guaranteed CPU execution
+    // - forcedBackend === 'webgpu' -> WebGPU only, NO fallback (exactly as requested)
+    // - forcedBackend === null     -> safe default: try WebGPU first, fall back to WASM
+    let backendsToTry;
+    if (this.forcedBackend === 'cpu') {
+      backendsToTry = ['wasm'];
+      DebugPanel.log('info', 'Backend slider: forced to CPU (WASM) only.');
+    } else if (this.forcedBackend === 'webgpu') {
+      backendsToTry = ['webgpu'];
+      DebugPanel.log('info', 'Backend slider: forced to WebGPU only — no CPU fallback.');
+    } else {
+      backendsToTry = ['webgpu', 'wasm'];
+    }
+
     let session = null;
     let lastError = null;
     let usedBackend = null;
@@ -220,6 +236,12 @@ const ONNXEngine = {
     }
 
     if (!session) {
+      if (this.forcedBackend === 'webgpu') {
+        throw new Error(
+          'WebGPU-only mode failed — this device/browser does not support WebGPU (or it errored). ' +
+          'Slide the backend control left to "CPU Only" to use WASM instead.'
+        );
+      }
       throw lastError || new Error(
         'Failed to load lite model. Make sure both ' +
         '"real_esrgan_general_x4v3.onnx" and "real_esrgan_general_x4v3.data" ' +
