@@ -353,12 +353,23 @@ const ImageProcessor = {
     // other's pixels) — only the GPU/WASM inference work overlaps. This
     // genuinely uses more memory (several tile buffers in flight at once)
     // and keeps the GPU queue fuller instead of idling between calls.
+    //
+    // IMPORTANT: a single ort.InferenceSession can only run one graph
+    // execution at a time internally — calling run() "concurrently" on
+    // the SAME session just queues calls one after another, giving no
+    // real speedup. So when Boost Mode is on, each concurrent worker
+    // gets its OWN independent session (via ONNXEngine.ensureSessionPool)
+    // — that's what actually achieves true parallel GPU work.
     const concurrency = boost ? Math.max(2, Math.min(4, navigator.hardwareConcurrency || 4)) : 1;
-    if (boost) {
-      DebugPanel.log('info', `Boost Mode active — processing up to ${concurrency} tiles concurrently.`);
+    let sessionPool = [ONNXEngine.session];
+
+    if (boost && concurrency > 1) {
+      onProgress(6, `Boost Mode: preparing ${concurrency} parallel AI sessions...`);
+      sessionPool = await ONNXEngine.ensureSessionPool(concurrency);
+      DebugPanel.log('info', `Boost Mode active — ${sessionPool.length} independent sessions processing tiles in true parallel.`);
     }
 
-    const processTile = async (tile) => {
+    const processTile = async (tile, workerSession) => {
       if (isCancelled()) {
         throw new Error('Processing cancelled by user.');
       }
@@ -369,7 +380,7 @@ const ImageProcessor = {
       const paddedImageData = this._padImageDataTo(tileImageData, fixedSize, fixedSize);
       const tensorData = this._imageDataToTensor(paddedImageData);
 
-      const { data: outputData, dims } = await ONNXEngine.runInference(tensorData, fixedSize, fixedSize);
+      const { data: outputData, dims } = await ONNXEngine.runInference(tensorData, fixedSize, fixedSize, workerSession);
 
       const paddedOutImageData = this._tensorToImageData(outputData, dims[3], dims[2]);
 
@@ -405,24 +416,24 @@ const ImageProcessor = {
 
       processedTiles++;
       const stagePct = Math.round((processedTiles / totalTiles) * 100);
-      onProgress(stagePct, `AI upscaling tile ${processedTiles}/${totalTiles}${boost ? ' (Boost Mode)' : ''}...`);
+      onProgress(stagePct, `AI upscaling tile ${processedTiles}/${totalTiles}${boost ? ' (Boost Mode — parallel)' : ''}...`);
       await Utils.sleep(0);
     };
 
     if (concurrency <= 1) {
       for (const tile of tiles) {
-        await processTile(tile);
+        await processTile(tile, sessionPool[0]);
       }
     } else {
       let nextIndex = 0;
-      const worker = async () => {
+      const worker = async (workerSession) => {
         while (nextIndex < tiles.length) {
           if (isCancelled()) throw new Error('Processing cancelled by user.');
           const myTile = tiles[nextIndex++];
-          await processTile(myTile);
+          await processTile(myTile, workerSession);
         }
       };
-      const workers = Array.from({ length: Math.min(concurrency, tiles.length) }, () => worker());
+      const workers = sessionPool.slice(0, Math.min(concurrency, tiles.length)).map(s => worker(s));
       await Promise.all(workers);
     }
 
