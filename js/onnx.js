@@ -40,7 +40,7 @@ const ONNXEngine = {
   // null       = auto (try WebGPU first, fall back to WASM if it fails)
   // 'cpu'      = force WASM only, never attempt WebGPU
   // 'webgpu'   = force WebGPU only, no fallback at all (as explicitly requested)
-  forcedBackend: 'webgpu',
+  forcedBackend: 'cpu',
 
   /* ---------------- LITE MODEL (RealESR-general-x4v3, ~4.65MB) ---------------- */
   // Bundled in the repo itself — same-origin, no CORS issues, no download step.
