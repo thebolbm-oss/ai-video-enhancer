@@ -18,6 +18,7 @@ const VideoProcessor = {
 
   ffmpeg: null,
   isLoaded: false,
+  recentLogMessages: [],
 
   // FFmpeg's JS glue code — small text files, self-hosted in this repo
   // (same-origin) instead of a CDN. Required because browsers refuse to
@@ -161,11 +162,16 @@ const VideoProcessor = {
     // resolves as a same-origin script automatically. No more CORS/Worker
     // SecurityError, and no special workarounds needed here.
     this.ffmpeg = new FFmpegClass();
+    this.recentLogMessages = [];
 
     this.ffmpeg.on('log', ({ message }) => {
       console.log('[FFmpeg]', message);
       if (typeof DebugPanel !== 'undefined') {
         DebugPanel.log('info', `[FFmpeg internal] ${message}`);
+      }
+      this.recentLogMessages.push(message);
+      if (this.recentLogMessages.length > 60) {
+        this.recentLogMessages.shift(); // keep only the most recent messages
       }
     });
 
@@ -204,8 +210,12 @@ const VideoProcessor = {
     const meta = await this._getVideoMetadata(file);
 
     // Limit frame extraction FPS to keep processing time reasonable.
-    // Lower FPS for longer videos, higher FPS for short clips.
-    const extractFps = meta.duration > 20 ? 8 : meta.duration > 8 ? 12 : 15;
+    // If the user picked a manual rate in Settings, use that instead —
+    // fewer frames extracted = proportionally less total processing time,
+    // at the cost of less smooth motion in the output.
+    const extractFps = settings.videoFps
+      ? settings.videoFps
+      : (meta.duration > 20 ? 8 : meta.duration > 8 ? 12 : 15);
 
     onProgress(2, 'Loading video into FFmpeg virtual filesystem...');
     const inputName = 'input' + this._getExtension(file.name);
@@ -249,7 +259,7 @@ const VideoProcessor = {
 
     const frameList = await this._listVirtualFrames(ffmpeg);
     if (frameList.length === 0) {
-      throw new Error('No frames were extracted from the video. The file may be corrupted.');
+      throw new Error(this._diagnoseExtractionFailure());
     }
 
     if (isCancelled()) throw new Error('Processing cancelled by user.');
@@ -306,7 +316,7 @@ const VideoProcessor = {
         '-c:v', 'libx264',
         '-pix_fmt', 'yuv420p',
         '-crf', '18',
-        '-preset', 'veryfast',
+        '-preset', 'ultrafast',
         'video_no_audio.mp4'
       ]);
     } catch (e) {
@@ -400,6 +410,56 @@ const VideoProcessor = {
       .map(e => e.name)
       .filter(name => /^frame_\d+\.png$/.test(name))
       .sort();
+  },
+
+  /* ------------------------------------------------------------------
+     DIAGNOSE WHY FRAME EXTRACTION PRODUCED ZERO FRAMES
+     Scans the recent FFmpeg internal log messages for known codec/format
+     failure patterns and returns a specific, actionable error message
+     instead of a generic "file may be corrupted" guess. FFmpeg.wasm
+     builds are compiled without some codecs (notably AV1, and sometimes
+     HEVC/H.265) to keep the download size reasonable — videos recorded
+     in those codecs will fail to decode here even though they're
+     perfectly valid files.
+     ------------------------------------------------------------------ */
+  _diagnoseExtractionFailure() {
+    const logs = (this.recentLogMessages || []).join(' | ');
+    const lower = logs.toLowerCase();
+
+    if (lower.includes('av1') || lower.includes('missing sequence header')) {
+      return (
+        'Ye video AV1 codec me hai, jo is browser-based FFmpeg build me support nahi hai ' +
+        '(size bachane ke liye AV1 decoder shamil nahi kiya gaya). Naye Android phones aksar ' +
+        'AV1 me record karte hain. Fix: phone ki Camera settings me "Video format/codec" dhundo ' +
+        'aur H.264 (ya "High Efficiency" OFF) select karke video dobara record/export karo, ' +
+        'ya kisi converter app se video ko H.264 MP4 me convert karke phir try karo.'
+      );
+    }
+
+    if (lower.includes('hevc') || lower.includes('h265') || lower.includes('h.265')) {
+      return (
+        'Ye video HEVC/H.265 codec me hai, jo is browser-based FFmpeg build me support nahi ho sakta. ' +
+        'Fix: phone ki Camera settings me codec ko H.264 par set karke dobara record karo, ' +
+        'ya video ko H.264 MP4 me convert karke try karo.'
+      );
+    }
+
+    if (lower.includes('unsupported codec') || lower.includes('decoder not found') || lower.includes('unknown codec')) {
+      return (
+        'Video ka codec is FFmpeg build me support nahi hai. Video ko standard H.264 MP4 format me ' +
+        'convert karke dobara try karo.'
+      );
+    }
+
+    if (lower.includes('moov atom not found') || lower.includes('invalid data found')) {
+      return (
+        'Video file corrupt lag rahi hai ya incomplete download hui hai (moov atom missing/invalid data). ' +
+        'File dobara download/select karke try karo — agar wahi error aaye to file genuinely damaged ho sakti hai.'
+      );
+    }
+
+    // Fallback — include a snippet of the actual FFmpeg output for the debug panel
+    return `Video se koi frame nahi nikal paya. FFmpeg output: "${logs.slice(-200) || 'no details available'}"`;
   },
 
   /* ------------------------------------------------------------------
