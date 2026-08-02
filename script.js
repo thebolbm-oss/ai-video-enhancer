@@ -138,6 +138,7 @@ const App = {
     edgeEnhance: false,
     textureEnhance: false,
     boostMode: false,
+    videoFps: 0, // 0 = auto (duration-based)
     batchMode: false
   },
 
@@ -187,6 +188,7 @@ function cacheElements() {
     'imageModeBtn', 'videoModeBtn',
     'scaleSelect', 'tileSelect', 'backendSelect',
     'faceEnhanceToggle', 'denoiseToggle', 'batchToggle',
+    'videoFpsSelect', 'videoFpsSetting',
     'sharpenToggle', 'edgeEnhanceToggle', 'textureEnhanceToggle',
     'enhanceBtn', 'resetBtn',
     'batchList', 'batchItems',
@@ -573,12 +575,14 @@ function setMode(mode) {
   if (mode === 'image') {
     App.els.fileInput.accept = 'image/*';
     App.els.uploadHint.textContent = 'Supported: JPG, PNG, WEBP (Max 25MB)';
+    if (App.els.videoFpsSetting) App.els.videoFpsSetting.classList.add('hidden');
   } else {
     App.els.fileInput.accept = 'video/*';
     App.els.uploadHint.textContent = 'Supported: MP4, WEBM, MOV (Max 400MB)';
     App.els.batchToggle.checked = false;
     App.settings.batchMode = false;
     App.els.batchList.classList.add('hidden');
+    if (App.els.videoFpsSetting) App.els.videoFpsSetting.classList.remove('hidden');
   }
 
   resetFileSelection();
@@ -715,6 +719,13 @@ function initSettingsPanel() {
     App.settings.scale = parseInt(e.target.value, 10);
     DebugPanel.log('info', `Scale changed to: ${App.settings.scale}x`);
   });
+
+  if (App.els.videoFpsSelect) {
+    App.els.videoFpsSelect.addEventListener('change', (e) => {
+      App.settings.videoFps = parseInt(e.target.value, 10) || 0;
+      DebugPanel.log('info', `Video extraction FPS set to: ${App.settings.videoFps || 'Auto'}`);
+    });
+  }
 
   App.els.tileSelect.addEventListener('change', (e) => {
     App.settings.tileSize = parseInt(e.target.value, 10);
