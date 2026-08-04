@@ -200,6 +200,30 @@ const VideoProcessor = {
      isCancelled(): function returning true if user cancelled
      Returns: { blob, width, height }
      ------------------------------------------------------------------ */
+  /* ------------------------------------------------------------------
+     TARGET RESOLUTION MODE FOR VIDEO — completely separate from the
+     manual Enhance flow (processVideo below is untouched). Computes
+     the exact scale needed to hit a target long-side resolution ONCE
+     from the video's metadata (so every frame gets the same consistent
+     scale — no flicker between frames), then reuses the existing,
+     already-tested processVideo() pipeline with that computed scale.
+     This works because the AI scale math already supports any decimal
+     value (e.g. 1.875x), not just the fixed 2x/4x manual options.
+     ------------------------------------------------------------------ */
+  async processVideoToTarget(file, targetLongSide, settings, onProgress = () => {}, isCancelled = () => false) {
+    onProgress(0, 'Reading video metadata to compute target scale...');
+    const meta = await this._getVideoMetadata(file);
+    const srcLongSide = Math.max(meta.width, meta.height);
+
+    const rawScale = targetLongSide / srcLongSide;
+    const appliedScale = Utils.clamp(rawScale, 1, 4); // video path keeps a 1x floor for simplicity
+
+    DebugPanel.log('info', `Target Resolution Mode (video): source ${meta.width}x${meta.height} (long side ${srcLongSide}px) -> target ${targetLongSide}px = ${rawScale.toFixed(3)}x needed, using ${appliedScale.toFixed(3)}x.`);
+
+    const targetSettings = { ...settings, scale: appliedScale };
+    return this.processVideo(file, targetSettings, onProgress, isCancelled);
+  },
+
   async processVideo(file, settings, onProgress = () => {}, isCancelled = () => false) {
     const ffmpeg = this.ffmpeg;
     if (!ffmpeg || !this.isLoaded) {
