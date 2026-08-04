@@ -293,6 +293,40 @@
     </div>
   </section>
 
+  <!-- ===================== TARGET RESOLUTION MODE SECTION ===================== -->
+  <section class="target-res-section" id="targetResSection">
+    <div class="section-container">
+      <h2 class="section-title"><i class="fa-solid fa-bullseye"></i> Target Resolution Mode</h2>
+      <p class="section-subtitle">
+        Fixed 2x/4x ki jagah — seedha bolo kitne pixels chahiye, system khud exact scale nikal lega
+        (jaise 1.8x, 2.3x) — na kam, na zaroorat se zyada heavy.
+      </p>
+
+      <div class="target-res-card glass">
+        <div class="target-res-presets" id="targetResPresets">
+          <button class="target-res-preset-btn" data-value="1080">1080p</button>
+          <button class="target-res-preset-btn" data-value="1440">1440p</button>
+          <button class="target-res-preset-btn" data-value="2000">2K</button>
+          <button class="target-res-preset-btn active" data-value="2400">2400p</button>
+          <button class="target-res-preset-btn" data-value="3840">4K</button>
+        </div>
+
+        <div class="target-res-custom">
+          <label for="targetResInput">Ya Custom Long-Side (px):</label>
+          <input type="number" id="targetResInput" class="select-input" value="2400" min="200" max="8000" step="10" />
+        </div>
+
+        <p class="target-res-preview" id="targetResPreview">
+          Koi file select karne ke baad yaha exact scale dikhega.
+        </p>
+
+        <button class="btn btn-primary btn-lg target-res-btn" id="targetResBtn" disabled>
+          <i class="fa-solid fa-bullseye"></i> Target Resolution Pe Enhance Karo
+        </button>
+      </div>
+    </div>
+  </section>
+
   <!-- ===================== VIDEO ENGINE SETUP SECTION ===================== -->
   <section class="model-setup-section" id="videoEngineSetup">
     <div class="section-container">
