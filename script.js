@@ -173,6 +173,7 @@ document.addEventListener('DOMContentLoaded', () => {
     initVideoEngineSetup();
     initBoostMode();
     initBackendSlider();
+    initTargetResMode();
     DebugPanel.log('success', 'All buttons and controls wired up.');
 
     setYear();
@@ -209,6 +210,8 @@ function cacheElements() {
     'fastModeBtn',
     // WebGPU Boost Mode
     'boostModeCard', 'boostModeBtn', 'boostModeBtnText', 'boostModeIcon', 'boostActiveBadge',
+    // Target Resolution Mode
+    'targetResPresets', 'targetResInput', 'targetResPreview', 'targetResBtn',
     // Video engine setup (ffmpeg-core.wasm download + upload + cache)
     'wasmDownloadLink', 'wasmFileInput', 'wasmUploadBtn',
     'wasmSetupProgress', 'wasmProgressBarInner', 'wasmProgressText',
@@ -435,6 +438,17 @@ function updateFastModeButtonState() {
     && !!App.state.currentFile
     && !App.state.isProcessing;
   App.els.fastModeBtn.disabled = !ready;
+
+  updateTargetResButtonState();
+}
+
+function updateTargetResButtonState() {
+  if (!App.els.targetResBtn) return;
+  const ready = ONNXEngine.isLoaded
+    && !!App.state.currentFile
+    && !App.state.isProcessing;
+  App.els.targetResBtn.disabled = !ready;
+  refreshTargetResPreview();
 }
 
 function updateModelStatus(type, text) {
@@ -792,6 +806,132 @@ function initActionButtons() {
     App.els.fastModeBtn.addEventListener('click', startFastModeEnhancement);
   }
 }
+
+/* ==========================================================================
+   TARGET RESOLUTION MODE — completely separate from manual Enhance and
+   Fast Mode. Person specifies an exact output resolution (long-side px)
+   instead of a fixed 1x/2x/4x multiplier, and the system computes the
+   precise scale needed. Works for both images and video.
+   ========================================================================== */
+function initTargetResMode() {
+  if (!App.els.targetResBtn) return;
+
+  if (App.els.targetResPresets) {
+    App.els.targetResPresets.querySelectorAll('.target-res-preset-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        App.els.targetResPresets.querySelectorAll('.target-res-preset-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        App.els.targetResInput.value = btn.dataset.value;
+        refreshTargetResPreview();
+      });
+    });
+  }
+
+  if (App.els.targetResInput) {
+    App.els.targetResInput.addEventListener('input', () => {
+      if (App.els.targetResPresets) {
+        App.els.targetResPresets.querySelectorAll('.target-res-preset-btn').forEach(b => b.classList.remove('active'));
+      }
+      refreshTargetResPreview();
+    });
+  }
+
+  App.els.targetResBtn.addEventListener('click', startTargetResEnhancement);
+}
+
+async function refreshTargetResPreview() {
+  if (!App.els.targetResPreview) return;
+
+  if (!App.state.currentFile) {
+    App.els.targetResPreview.textContent = 'Koi file select karne ke baad yaha exact scale dikhega.';
+    return;
+  }
+
+  const target = parseInt(App.els.targetResInput.value, 10) || 2400;
+
+  try {
+    let srcLongSide;
+    if (App.state.mode === 'image') {
+      const dims = await Utils.getImageDimensions(App.state.currentFile);
+      srcLongSide = Math.max(dims.width, dims.height);
+    } else {
+      const meta = await VideoProcessor._getVideoMetadata(App.state.currentFile);
+      srcLongSide = Math.max(meta.width, meta.height);
+    }
+
+    const rawScale = target / srcLongSide;
+    const appliedScale = Utils.clamp(rawScale, App.state.mode === 'image' ? 0.1 : 1, 4);
+
+    if (rawScale > 4.05) {
+      App.els.targetResPreview.textContent =
+        `Source ${srcLongSide}px hai — ${target}px ke liye ${rawScale.toFixed(2)}x chahiye, lekin ek pass max 4x tak hi ja sakta hai. ` +
+        `4x se output ~${Math.round(srcLongSide * 4)}px milega.`;
+    } else if (appliedScale <= 1) {
+      App.els.targetResPreview.textContent =
+        `Source (${srcLongSide}px) already target se bada/barabar hai — AI use nahi hoga, seedha ${target}px tak resize hoga (bahut fast).`;
+    } else {
+      App.els.targetResPreview.textContent =
+        `Source ${srcLongSide}px → Target ${target}px = ${appliedScale.toFixed(3)}x scale (exact, AI utna hi kaam karega jitna zaroori hai).`;
+    }
+  } catch (e) {
+    App.els.targetResPreview.textContent = 'Preview calculate nahi ho paya — enhance karte waqt sahi scale lagega.';
+  }
+}
+
+async function startTargetResEnhancement() {
+  if (App.state.isProcessing) return;
+
+  if (!ONNXEngine.isLoaded) {
+    Utils.showNotification('error', 'Model Load Nahi Hua', 'AI model abhi bhi load ho raha hai, thoda wait karo.');
+    return;
+  }
+  if (!App.state.currentFile) {
+    Utils.showNotification('error', 'No File', 'Pehle koi image ya video select karo.');
+    return;
+  }
+
+  const target = parseInt(App.els.targetResInput.value, 10) || 2400;
+  const file = App.state.currentFile;
+  DebugPanel.log('info', `Target Resolution Mode started for: ${file.name}, target ${target}px`);
+
+  beginProcessing('Target Resolution Mode', `Calculating exact scale for ${target}px...`);
+
+  try {
+    if (App.state.mode === 'image') {
+      const result = await ImageProcessor.upscaleImageToTarget(file, target, App.settings, (pct, stage) => {
+        UI.updateProgress(pct, stage);
+        DebugPanel.log('info', `[Target Res ${pct}%] ${stage}`);
+      }, () => App.state.cancelled);
+
+      if (App.state.cancelled) return finishCancelled();
+
+      DebugPanel.log('success', `Target Resolution complete. Applied scale: ${result.appliedScale.toFixed(3)}x${result.skippedAI ? ' (AI skipped)' : ''}`);
+      completeImageResult(file, result);
+    } else {
+      await ensureModelLoaded();
+      await VideoProcessor.loadFFmpeg((pct, stage) => {
+        UI.updateProgress(Math.round(pct * 0.1), stage);
+      });
+
+      if (App.state.cancelled) return finishCancelled();
+
+      const result = await VideoProcessor.processVideoToTarget(file, target, App.settings, (pct, stage) => {
+        const mapped = 10 + Math.round(pct * 0.9);
+        UI.updateProgress(mapped, stage);
+        DebugPanel.log('info', `[Target Res ${mapped}%] ${stage}`);
+      }, () => App.state.cancelled);
+
+      if (App.state.cancelled) return finishCancelled();
+
+      DebugPanel.log('success', 'Target Resolution video complete.');
+      completeVideoResult(file, result);
+    }
+  } catch (err) {
+    DebugPanel.log('error', `Target Resolution Mode failed: ${err.message}\n${err.stack || ''}`);
+    handleProcessingError(err);
+  }
+}
+
 
 async function startFastModeEnhancement() {
   if (App.state.isProcessing) return;
