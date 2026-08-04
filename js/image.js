@@ -107,6 +107,101 @@ const ImageProcessor = {
   },
 
   /* ------------------------------------------------------------------
+     TARGET RESOLUTION MODE — separate from manual/Fast Mode entirely.
+     Instead of picking a fixed 1x/2x/4x multiplier, the person specifies
+     the exact output resolution (long-side pixels) they want, and this
+     computes whatever scale factor is actually needed to hit it —
+     e.g. a 1280px source targeting 2400px needs ~1.875x, not a forced
+     2x or 4x. Uses the same pre-scale-source trick as manual mode's
+     scale<4 path so the AI only does as much work as genuinely needed
+     to reach that target, not a wasteful full 4x that gets shrunk after.
+
+     settings: same shape as upscaleImage() (denoise, sharpen, etc. all
+     still apply) — only the scale is computed differently here.
+     targetLongSide: desired output size in pixels (long side)
+     Returns: { blob, width, height, appliedScale, skippedAI }
+     ------------------------------------------------------------------ */
+  async upscaleImageToTarget(file, targetLongSide, settings, onProgress = () => {}, isCancelled = () => false) {
+    onProgress(0, 'Reading image file...');
+
+    const srcCanvas = await this._loadFileToCanvas(file);
+    const srcLongSide = Math.max(srcCanvas.width, srcCanvas.height);
+
+    const rawScale = targetLongSide / srcLongSide;
+    // A single AI pass tops out at 4x (the model's native factor). Below
+    // 1x means the target is smaller than the source — no AI needed at all.
+    const appliedScale = Utils.clamp(rawScale, 0.1, 4);
+    const skippedAI = appliedScale <= 1;
+
+    DebugPanel.log('info', `Target Resolution Mode: source ${srcCanvas.width}x${srcCanvas.height} (long side ${srcLongSide}px) -> target ${targetLongSide}px = ${rawScale.toFixed(3)}x needed, using ${appliedScale.toFixed(3)}x${skippedAI ? ' (AI skipped, source already big enough)' : ''}.`);
+
+    let outCanvas;
+
+    if (skippedAI) {
+      onProgress(20, 'Source already big enough for target — resizing without AI...');
+      outCanvas = this._resizeCanvas(
+        srcCanvas,
+        Math.max(1, Math.round(srcCanvas.width * appliedScale)),
+        Math.max(1, Math.round(srcCanvas.height * appliedScale))
+      );
+    } else {
+      // Same trick as manual mode: pre-shrink the source so the AI's
+      // fixed native 4x lands exactly on the scale we actually need,
+      // instead of running a full 4x pass and shrinking the output —
+      // that would waste real compute time for no benefit.
+      let aiInput = srcCanvas;
+      if (appliedScale < 4) {
+        const preScale = appliedScale / 4;
+        aiInput = this._resizeCanvas(
+          srcCanvas,
+          Math.max(1, Math.round(srcCanvas.width * preScale)),
+          Math.max(1, Math.round(srcCanvas.height * preScale))
+        );
+      }
+
+      outCanvas = await this._runAIUpscale(aiInput, 4, (pct, stage) => {
+        onProgress(5 + Math.round(pct * 0.85), stage);
+      }, isCancelled, !!(settings && settings.boostMode));
+    }
+
+    const outCtx = outCanvas.getContext('2d');
+    onProgress(92, 'Applying post-processing...');
+
+    const s = settings || {};
+    if (s.denoise) {
+      this._applyDenoise(outCtx, outCanvas.width, outCanvas.height);
+    }
+    if (s.sharpen) {
+      onProgress(95, 'Sharpening (GPU)...');
+      this._safeGpuFilter(outCtx, outCanvas, 'sharpen', 0.6);
+    }
+    if (s.edgeEnhance) {
+      onProgress(96, 'Enhancing edges (GPU)...');
+      this._safeGpuFilter(outCtx, outCanvas, 'edge', 0.45);
+    }
+    if (s.textureEnhance) {
+      onProgress(97, 'Boosting texture/clarity...');
+      try {
+        PostProcess.applyTextureBoost(outCtx, outCanvas.width, outCanvas.height, 0.35);
+      } catch (e) {
+        DebugPanel.log('warn', `Texture boost skipped: ${e.message}`);
+      }
+    }
+
+    onProgress(98, 'Encoding final image...');
+    const blob = await Utils.canvasToBlob(outCanvas, 'image/png');
+    onProgress(100, 'Done!');
+
+    return {
+      blob,
+      width: outCanvas.width,
+      height: outCanvas.height,
+      appliedScale,
+      skippedAI
+    };
+  },
+
+  /* ------------------------------------------------------------------
      FAST MODE ENTRY POINT — Analyze first, decide the plan, enhance,
      then validate the result and retry once (milder) if it degraded.
      Always runs the AI model at its native 4x, then resizes down to
